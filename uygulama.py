@@ -16,6 +16,7 @@ import base64
 import sqlite3
 import hashlib
 
+
 from streamlit_option_menu import option_menu # YENİ MODERN MENÜ MODÜLÜ
 
 # --- SAYFA AYARLARI ---
@@ -24,6 +25,12 @@ st.set_page_config(page_title="Yapay Zeka Loto Analiz Merkezi", page_icon="🧿"
 # --- EVRENSEL CSS VE WHITE-LABEL (İZ SİLME) ---
 st.markdown("""
     <style>
+    /* EKRANI YUKARI ÇEKME KODU (Devasa boşluğu yok eder) */
+    .block-container {
+        padding-top: 1.5rem !important; 
+        padding-bottom: 1rem !important;
+    }
+
     #MainMenu {visibility: hidden;} /* Sağ üstteki menüyü gizler */
     header {visibility: hidden;} /* Deploy butonunu gizler */
     footer {visibility: hidden;} /* Streamlit yazısını gizler */
@@ -98,13 +105,32 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- SAĞ ÜST KÖŞE (MİNİMAL GİRİŞ VE ÇIKIŞ DURUMU) ---
+col_bosluk, col_login = st.columns([5, 1.2])
+with col_login:
+    if st.session_state.get("logged_in", False):
+        st.markdown(f"<div style='text-align:right; font-size:12px; color:#64748b; margin-bottom:5px;'>Hoş geldin, <br><b style='color:#10b981;'>{st.session_state.user_email}</b></div>", unsafe_allow_html=True)
+        if st.button("🚪 Çıkış Yap", key="minimal_cikis", use_container_width=True):
+            st.session_state.logged_in = False
+            st.session_state.user_email = ""
+            st.session_state.is_vip = False
+            st.session_state.giris_ekranini_ac = False 
+            st.rerun()
+    else:
+        st.markdown("<div style='text-align:right; font-size:12px; color:#94a3b8; margin-bottom:5px; font-weight:600;'>Sisteme giriş yapılmadı<br><span style='color:#ef4444; font-size:11px;'>Yetkisiz Ziyaretçi</span></div>", unsafe_allow_html=True)
+        # SİHİRLİ TETİKLEYİCİ: Butona basılınca "giris_ekranini_ac" komutu True olur
+        if st.button("🔑 Giriş / Kayıt", key="minimal_giris", use_container_width=True):
+            st.session_state.giris_ekranini_ac = True  
+            st.rerun()
+
 # --- SİSTEM HAFIZASI (KASA VE VIP KONTROLÜ) ---
 if "is_vip" not in st.session_state:
     st.session_state.is_vip = False
 
 if "saved_coupons" not in st.session_state:
     st.session_state.saved_coupons = []
-# ==========================================
+if "saved_coupons" not in st.session_state:
+    st.session_state.saved_coupons = []# ==========================================
 # 0. PROFESYONEL VERİTABANI & CRM MİMARİSİ
 # ==========================================
 def init_db():
@@ -135,24 +161,65 @@ init_db()
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+# --- Kriptografi Motoru ---
+def hash_password(password):
+    # Şifreyi SHA-256 algoritmasıyla geri döndürülemez bir şifreye (hash) çevirir
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def create_user(email, password):
+    conn = sqlite3.connect('kuantum_users.db')
+    c = conn.cursor()
+    # Şifreyi direkt değil, şifrelenmiş (kriptolanmış) halini veritabanına yazıyoruz
+    hashed_pw = hash_password(password)
     try:
-        conn = sqlite3.connect('kuantum_users.db')
-        c = conn.cursor()
-        c.execute("INSERT INTO users (email, password) VALUES (?, ?)", (email, hash_password(password)))
+        c.execute("INSERT INTO users (email, password, is_vip) VALUES (?, ?, 0)", (email, hashed_pw))
         conn.commit()
-        conn.close()
         return True
-    except sqlite3.IntegrityError: # Email zaten kayıtlıysa
+    except sqlite3.IntegrityError:
+        # Bu hata, veritabanında bu e-postanın ZATEN var olduğunu gösterir
         return False
+    finally:
+        conn.close()
 
 def verify_user(email, password):
     conn = sqlite3.connect('kuantum_users.db')
     c = conn.cursor()
-    c.execute("SELECT is_vip FROM users WHERE email=? AND password=?", (email, hash_password(password)))
-    user = c.fetchone()
+    # Giriş yaparken girilen şifreyi de şifreleyip, veritabanındaki şifreli haliyle karşılaştırıyoruz
+    hashed_pw = hash_password(password)
+    c.execute("SELECT is_vip FROM users WHERE email=? AND password=?", (email, hashed_pw))
+    result = c.fetchone()
     conn.close()
-    return user # Eğer doğruysa (is_vip,), yanlışsa None döner
+    return result
+
+def get_all_users():
+    conn = sqlite3.connect('kuantum_users.db')
+    c = conn.cursor()
+    c.execute("SELECT email, is_vip FROM users")
+    users = c.fetchall()
+    conn.close()
+    return users
+
+def update_vip_status(email, new_status):
+    conn = sqlite3.connect('kuantum_users.db')
+    c = conn.cursor()
+    c.execute("UPDATE users SET is_vip=? WHERE email=?", (new_status, email))
+    conn.commit()
+    conn.close()
+
+def get_all_users():
+    conn = sqlite3.connect('kuantum_users.db')
+    c = conn.cursor()
+    c.execute("SELECT email, is_vip FROM users")
+    users = c.fetchall()
+    conn.close()
+    return users
+
+def update_vip_status(email, new_status):
+    conn = sqlite3.connect('kuantum_users.db')
+    c = conn.cursor()
+    c.execute("UPDATE users SET is_vip=? WHERE email=?", (new_status, email))
+    conn.commit()
+    conn.close()
 
 def save_coupon_to_db(email, game_id, game_name, nums, timestamp):
     conn = sqlite3.connect('kuantum_users.db')
@@ -541,13 +608,14 @@ def load_sayisal_ai_data():
 
 # --- MODERN YAN MENÜ (SIDEBAR) ---
 with st.sidebar:
-    st.markdown("<h2 style='text-align: center; color: #1e3a8a; font-weight: 900; margin-bottom: 0;'>🧿 KUANTUM AI</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: #1e3a8a; font-weight: 900; margin-bottom: 0;'>🧿KUANTUM BİLGİSAYAR ve YAPAY ZEKA MOTORLARI ile LOTO ANALİZİ</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #64748b; font-size: 13px; margin-bottom: 25px;'>Akıllı Loto Filtreleme Motoru</p>", unsafe_allow_html=True)
 
     selected_menu_opt = option_menu(
         menu_title=None,
-        options=["Ana Sayfa", "Kuponlarım", "Çılgın Sayısal Loto", "Süper Loto", "Şans Topu", "On Numara", "VIP Giriş Merkezi"],
-        icons=["house-door-fill", "ticket-detailed", "dice-6-fill", "bullseye", "star-fill", "hash", "gem"],
+        # VIP Menüden tamamen kaldırıldı
+        options=["Ana Sayfa", "Kuponlarım", "Çılgın Sayısal Loto", "Süper Loto", "Şans Topu", "On Numara"], 
+        icons=["house-door-fill", "ticket-detailed", "dice-6-fill", "bullseye", "star-fill", "hash"],
         menu_icon="cast",
         default_index=0,
         styles={
@@ -558,29 +626,122 @@ with st.sidebar:
         }
     )
     
-    st.markdown("<hr style='margin:15px 0; border: 1px dashed #cbd5e1;'>", unsafe_allow_html=True)
+    # STANDART / VIP BİLGİ KUTUSU (SADECE ANA SAYFA İÇİN)
+if selected_menu_opt == "Ana Sayfa":
+    st.sidebar.markdown("<hr style='margin:15px 0; border: 1px dashed #cbd5e1;'>", unsafe_allow_html=True)
     
-    if st.session_state.is_vip:
-        st.markdown("<div style='text-align:center; background-color:#ecfdf5; padding:12px; border-radius:8px; border:2px solid #10b981;'><strong style='color:#059669; font-size:16px;'>💎 VIP ÜYE AKTİF</strong><br><span style='font-size:13px; color:#047857; font-weight:bold;'>Sınırsız Üretim Devrede</span></div>", unsafe_allow_html=True)
+    kullanici_giris_yapti_mi = st.session_state.get("logged_in", False)
+    vip_mi = st.session_state.get("is_vip", False)
+
+    if not kullanici_giris_yapti_mi:
+        # 1. ZİYARETÇİ GÖRÜNÜMÜ (Gri Nötr Tema)
+        st.sidebar.markdown("""
+        <div style='background-color: #f8fafc; border: 2px solid #cbd5e1; border-radius: 8px; padding: 15px; text-align: center; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+            <h4 style='color: #475569; margin-top: 0; font-weight: 900; font-size: 16px;'>👁️ ZİYARETÇİ</h4>
+            <p style='font-size: 13px; color: #334155; font-weight: bold; margin-bottom: 5px;'>Maks. 3 Manuel / 1 AI Kolon</p>
+            <p style='font-size: 11px; color: #dc2626; margin-bottom: 0; font-weight: bold;'>Kupon kaydetmek için giriş yapın.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    elif kullanici_giris_yapti_mi and not vip_mi:
+        # 2. STANDART ÜYE GÖRÜNÜMÜ (Mavi Aktif Tema)
+        st.sidebar.markdown("""
+        <div style='background-color: #eff6ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 15px; text-align: center; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(59,130,246,0.1);'>
+            <h4 style='color: #1d4ed8; margin-top: 0; font-weight: 900; font-size: 16px;'>👤 STANDART ÜYE</h4>
+            <p style='font-size: 13px; color: #1e3a8a; font-weight: bold; margin-bottom: 5px;'>Maks. 3 Manuel / 1 AI Kolon</p>
+            <p style='font-size: 11px; color: #b45309; margin-bottom: 0; font-weight: bold;'>Sınırları kaldırmak için VIP'ye geçin.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
     else:
-        st.markdown("<div style='text-align:center; background-color:#fef2f2; padding:12px; border-radius:8px; border:2px solid #ef4444;'><strong style='color:#b91c1c; font-size:16px;'>👤 STANDART ÜYE</strong><br><span style='font-size:13px; color:#991b1b; font-weight:bold;'>Maks. 3 Kolon Üretimi</span><br><span style='font-size:11px; color:#ef4444;'>Sınırı kaldırmak için VIP girişi yapın.</span></div>", unsafe_allow_html=True)
+        # 3. VIP ÜYE GÖRÜNÜMÜ (Zümrüt VIP Tema)
+        st.sidebar.markdown("""
+        <div style='background-color: #ecfdf5; border: 2px solid #10b981; border-radius: 8px; padding: 15px; text-align: center; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(16,185,129,0.15);'>
+            <h4 style='color: #047857; margin-top: 0; font-weight: 900; font-size: 16px;'>👑 VIP ÜYE</h4>
+            <p style='font-size: 13px; color: #064e3b; font-weight: bold; margin-bottom: 5px;'>Sınırsız Kolon Üretimi</p>
+            <p style='font-size: 11px; color: #059669; margin-bottom: 0; font-weight: bold;'>Kuantum motoru tam yetkiyle emrinizde.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-# Arka plandaki alt kodlarınla %100 uyumlu olması için isim eşleştirmesi:
-if selected_menu_opt == "Ana Sayfa": selected_game = "ANA SAYFA"
-elif selected_menu_opt == "Kuponlarım": selected_game = "KUPONLARIM"  # <-- YENİ EKLENEN SATIR
-elif selected_menu_opt == "Çılgın Sayısal Loto": selected_game = "ÇILGIN SAYISAL LOTO AI"
-elif selected_menu_opt == "Süper Loto": selected_game = "SÜPER LOTO AI"
-elif selected_menu_opt == "Şans Topu": selected_game = "ŞANS TOPU AI"
-elif selected_menu_opt == "On Numara": selected_game = "ON NUMARA AI"
-elif selected_menu_opt == "VIP Giriş Merkezi": selected_game = "VIP GİRİŞ MERKEZİ"
 
-# ==========================================
+# ==============================================================
+# --- AKILLI YÖNLENDİRME MERKEZİ (ROUTING) ---
+# ==============================================================
+
+if "son_secilen_menu" not in st.session_state:
+    st.session_state.son_secilen_menu = selected_menu_opt
+
+# Müşteri sol menüde farklı bir yere tıklarsa giriş modundan çık
+if st.session_state.son_secilen_menu != selected_menu_opt:
+    st.session_state.giris_ekranini_ac = False
+    st.session_state.son_secilen_menu = selected_menu_opt
+
+# 👇 YÖNLENDİRME KONTROLÜ 👇
+if st.session_state.get("giris_ekranini_ac", False) and not st.session_state.get("logged_in", False):
+    # Eğer butona basıldıysa diğer tüm menüleri iptal et ve VIP Girişini aç
+    selected_game = "VIP GİRİŞ MERKEZİ"
+else:
+    # Basılmadıysa standart menü işleyişine devam et
+    if selected_menu_opt == "Ana Sayfa": selected_game = "ANA SAYFA"
+    elif selected_menu_opt == "Kuponlarım": selected_game = "KUPONLARIM"
+    elif selected_menu_opt == "Çılgın Sayısal Loto": selected_game = "ÇILGIN SAYISAL LOTO AI"
+    elif selected_menu_opt == "Süper Loto": selected_game = "SÜPER LOTO AI"
+    elif selected_menu_opt == "Şans Topu": selected_game = "ŞANS TOPU AI"
+    elif selected_menu_opt == "On Numara": selected_game = "ON NUMARA AI"# ==========================================
 # 👤 MÜŞTERİ YÖNETİMİ VE ÜYELİK PANELİ
 # ==========================================
 if selected_game == "VIP GİRİŞ MERKEZİ":
     st.markdown("<div class='main-title' style='color:#1e3a8a;'>👤 ÜYELİK VE VIP PORTAL</div>", unsafe_allow_html=True)
-    st.markdown("<div class='sub-title' style='color:#64748b;'>Sisteme Giriş Yapın veya Ücretsiz Hesap Oluşturun</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-title' style='color:#64748b; margin-bottom: 30px;'>Sisteme Giriş Yapın veya Ücretsiz Hesap Oluşturun</div>", unsafe_allow_html=True)
+
+    # ==========================================
+    # --- VİTRİN: ÜYELİK AVANTAJLARI (BİLGİ KARTLARI) ---
+    # ==========================================
+    k1, k2, k3 = st.columns(3)
     
+    with k1:
+        st.markdown("""
+        <div style='background-color: #f8fafc; border-top: 5px solid #94a3b8; padding: 20px; border-radius: 10px; min-height: 280px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);'>
+            <h4 style='color: #475569; text-align:center; font-weight:900; font-size: 18px;'>👁️ ZİYARETÇİ</h4>
+            <hr style='border-color:#e2e8f0; margin:10px 0;'>
+            <ul style='color: #475569; font-size: 13.5px; line-height: 1.7; padding-left: 20px; font-weight:500;'>
+                <li>Tüm Kuantum filtrelerine ve Yapay Zeka analizlerine <b>tam erişim.</b></li>
+                <li>Her analizde maksimum <b>3 manuel</b> ve <b>1 Otopilot</b> kolon üretimi.</li>
+                <li style='color:#dc2626; font-weight:bold; margin-top:8px;'>❌ Kilitli: Üretilen kuponları sistem hafızasına kaydetme ve arşivleme.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with k2:
+        st.markdown("""
+        <div style='background-color: #eff6ff; border-top: 5px solid #3b82f6; padding: 20px; border-radius: 10px; min-height: 280px; box-shadow: 0 4px 10px rgba(59,130,246,0.1);'>
+            <h4 style='color: #1d4ed8; text-align:center; font-weight:900; font-size: 18px;'>👤 STANDART ÜYE</h4>
+            <hr style='border-color:#bfdbfe; margin:10px 0;'>
+            <ul style='color: #1e3a8a; font-size: 13.5px; line-height: 1.7; padding-left: 20px; font-weight:500;'>
+                <li>Tüm Kuantum filtrelerine ve Yapay Zeka analizlerine <b>tam erişim.</b></li>
+                <li>Üretilen kuponları sistem hafızasına <b>kaydetme ve arşivleme.</b></li>
+                <li style='color:#b45309; font-weight:bold; margin-top:8px;'>⚠️ Sınırlı Güç: Her analizde maksimum <b>3 manuel</b> ve <b>1 Otopilot</b> kolon üretimi.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with k3:
+        st.markdown("""
+        <div style='background-color: #ecfdf5; border-top: 5px solid #10b981; padding: 20px; border-radius: 10px; min-height: 280px; box-shadow: 0 4px 10px rgba(16,185,129,0.1);'>
+            <h4 style='color: #047857; text-align:center; font-weight:900; font-size: 18px;'>💎 VIP ÜYE</h4>
+            <hr style='border-color:#a7f3d0; margin:10px 0;'>
+            <ul style='color: #064e3b; font-size: 13.5px; line-height: 1.7; padding-left: 20px; font-weight:500;'>
+                <li>Filtrelere, analizlere ve kişisel arşive <b>kesintisiz tam erişim.</b></li>
+                <li>Sistemdeki kolon üretim kısıtlamalarının ve sayaçların <b>kaldırılması.</b></li>
+                <li>Tek seferde <b>sınırsız sayıda</b> manuel ve yapay zeka kolon üretimi.</li>
+                <li>Paradoksları aşana kadar <b>limitsiz</b> kural deneme özgürlüğü.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("<br><hr style='border: 1px dashed #cbd5e1; margin-bottom:30px;'>", unsafe_allow_html=True)
+    
+    # ... KAYIT OL / GİRİŞ YAP SEKMELERİN ...    
     if not st.session_state.logged_in:
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
@@ -589,7 +750,7 @@ if selected_game == "VIP GİRİŞ MERKEZİ":
             tab_login, tab_register = st.tabs(["🔑 Giriş Yap", "📝 Ücretsiz Kayıt Ol"])
             
             with tab_login:
-                login_email = st.text_input("E-posta Adresi:", key="login_email")
+                login_email = st.text_input("E-posta Adresi:", key="login_email").strip()
                 login_pass = st.text_input("Şifre:", type="password", key="login_pass")
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("Sisteme Giriş Yap", type="primary", use_container_width=True):
@@ -615,13 +776,17 @@ if selected_game == "VIP GİRİŞ MERKEZİ":
                         st.warning("Lütfen tüm alanları doldurun.")
                         
             with tab_register:
-                reg_email = st.text_input("E-posta Adresi:", key="reg_email")
+                reg_email = st.text_input("E-posta Adresi:", key="reg_email").strip()
                 reg_pass = st.text_input("Şifre Belirleyin:", type="password", key="reg_pass")
                 reg_pass2 = st.text_input("Şifreyi Tekrar Girin:", type="password", key="reg_pass2")
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("Hesap Oluştur", type="primary", use_container_width=True):
                     if reg_email and reg_pass and reg_pass2:
-                        if reg_pass != reg_pass2:
+                        # Email format kontrolü (Regex ile)
+                        email_regex = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+                        if not re.match(email_regex, reg_email):
+                            st.error("🚨 Lütfen geçerli bir e-posta adresi girin! (Örn: isim@mail.com)")
+                        elif reg_pass != reg_pass2:
                             st.error("🚨 Şifreler uyuşmuyor!")
                         elif len(reg_pass) < 6:
                             st.error("🚨 Şifre en az 6 karakter olmalıdır.")
@@ -639,33 +804,134 @@ if selected_game == "VIP GİRİŞ MERKEZİ":
         # --- GİRİŞ YAPMIŞ KULLANICI İÇİN KONTROL PANELİ (DASHBOARD) ---
         st.success(f"Hoş geldiniz, **{st.session_state.user_email}**")
         
-        c_dash1, c_dash2 = st.columns(2)
-        with c_dash1:
-            if st.session_state.is_vip:
-                st.markdown("<div class='metric-card' style='border-top: 4px solid #10b981; padding:25px;'><b>Üyelik Durumu</b><br><span style='font-size:24px; color:#10b981; font-weight:900;'>💎 VIP ÜYE</span><br><span style='font-size:14px; color:#64748b;'>Tüm Yapay Zeka Kilitleri Açık</span></div>", unsafe_allow_html=True)
-            else:
-                st.markdown("<div class='metric-card' style='border-top: 4px solid #ef4444; padding:25px;'><b>Üyelik Durumu</b><br><span style='font-size:24px; color:#ef4444; font-weight:900;'>👤 STANDART ÜYE</span><br><span style='font-size:14px; color:#64748b;'>Maksimum 3 Kolon / VIP'ye Geçin</span></div>", unsafe_allow_html=True)
-        with c_dash2:
-            st.markdown("<div class='metric-card' style='border-top: 4px solid #d97706; padding:25px;'><b>Kasa Durumu</b><br><span style='font-size:24px; color:#d97706; font-weight:900;'>KORUMADA</span><br><span style='font-size:14px; color:#64748b;'>Kayıtlı Kuponlarınız Veritabanında Güvende</span></div>", unsafe_allow_html=True)
+# 👑 SADECE KAPTAN'IN GÖRECEĞİ GİZLİ BÖLÜM (HAYALET PANEL)
+        if st.session_state.user_email == "admin@kaptan.com":
+            st.markdown("<div style='background-color:#1e293b; padding:20px; border-radius:10px; border:2px solid #fbbf24; margin-top:20px; margin-bottom:20px;'>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color:#fbbf24; text-align:center; margin-top:0;'>👑 KAPTAN KÖŞKÜ</h3>", unsafe_allow_html=True)
             
-        st.markdown("<br>", unsafe_allow_html=True)
-        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
-        with col_btn2:
-            if st.button("🚪 Güvenli Çıkış Yap", type="secondary", use_container_width=True):
-                st.session_state.logged_in = False
-                st.session_state.user_email = ""
-                st.session_state.is_vip = False
-                st.rerun()
+            # --- 2 SEKME OLUŞTURUYORUZ ---
+            tab_musteriler, tab_otopilot = st.tabs(["👥 Müşteri Yönetimi", "🚀 Gizli Otopilot Sistemi"])
+            
+            with tab_musteriler:
+                st.markdown("<p style='color:#cbd5e1; text-align:center; font-size:14px; margin-top:15px;'>Aşağıdaki listeden müşterilerinize tek tıkla VIP yetkisi verebilirsiniz.</p>", unsafe_allow_html=True)
+                
+                try:
+                    all_users = get_all_users()
+                    if all_users:
+                        for usr_email, is_vip in all_users:
+                            if usr_email == "admin@kaptan.com":
+                                continue
+                                
+                            col_u1, col_u2, col_u3 = st.columns([2, 1, 1])
+                            with col_u1:
+                                st.markdown(f"<div style='padding-top:10px; color:white;'>👤 {usr_email}</div>", unsafe_allow_html=True)
+                            with col_u2:
+                                if is_vip:
+                                    st.markdown("<div style='padding-top:10px; color:#10b981; font-weight:bold;'>💎 VIP ÜYE</div>", unsafe_allow_html=True)
+                                else:
+                                    st.markdown("<div style='padding-top:10px; color:#94a3b8; font-weight:bold;'>Standart</div>", unsafe_allow_html=True)
+                            with col_u3:
+                                if is_vip:
+                                    if st.button("Yetkiyi Al", key=f"revoke_{usr_email}"):
+                                        update_vip_status(usr_email, 0)
+                                        st.rerun()
+                                else:
+                                    if st.button("👑 VIP YAP", type="primary", key=f"makevip_{usr_email}"):
+                                        update_vip_status(usr_email, 1)
+                                        st.rerun()
+                        st.markdown("<hr style='border-color:#334155;'>", unsafe_allow_html=True)
+                    else:
+                        st.info("Henüz sisteme kayıtlı müşteri yok.")
+                except Exception as e:
+                    st.error("🚨 Veritabanı yönetim fonksiyonları eksik!")
 
+            with tab_otopilot:
+                st.markdown("<h4 style='color:#10b981; text-align:center; margin-top:15px;'>🤖 GİZLİ OTOPİLOT KONTROL MERKEZİ</h4>", unsafe_allow_html=True)
+                st.markdown("<p style='font-size: 13px; color: #cbd5e1; text-align: center;'>Hangi oyunun veritabanına dışarıdan müdahale etmek istediğinizi seçin.</p>", unsafe_allow_html=True)
+                
+                # --- OYUN SEÇİCİ ---
+                hedef_oyun = st.selectbox("🎯 Güncellenecek Loto Modülü:", 
+                                         ["Çılgın Sayısal Loto", "Süper Loto", "Şans Topu", "On Numara"], 
+                                         key="otopilot_oyun_secim")
+                
+                # Seçilen oyuna göre dosya adını ve ipucu metnini belirliyoruz
+                if hedef_oyun == "Çılgın Sayısal Loto":
+                    dosya_adi = "otopilot_sayisal.csv"
+                    ornek_format = "Örn: 4, 15, 22, 28, 31, 75"
+                elif hedef_oyun == "Süper Loto":
+                    dosya_adi = "otopilot_super.csv"
+                    ornek_format = "Örn: 5, 12, 23, 34, 45, 56"
+                elif hedef_oyun == "Şans Topu":
+                    dosya_adi = "otopilot_sans.csv"
+                    ornek_format = "Örn: 4, 15, 22, 28, 31, 7 (Son sayı + kısmıdır)"
+                else:
+                    dosya_adi = "otopilot_on_numara.csv"
+                    ornek_format = "Örn: 1, 4, 15, 22, ... (22 Sayı girin)"
+                
+                yeni_sayilar = st.text_input(f"Sayılar ({ornek_format}):", key="otopilot_sayilar_input")
+                c_btn1, c_btn2 = st.columns(2)
+                
+                with c_btn1:
+                    if st.button(f"💾 {hedef_oyun} Sistemine Kaydet", use_container_width=True, key="otop_kaydet_btn"):
+                        if yeni_sayilar:
+                            try:
+                                nums = [int(x.strip()) for x in yeni_sayilar.split(',') if x.strip().isdigit()]
+                                if len(nums) > 0:
+                                    new_df = pd.DataFrame([nums])
+                                    if os.path.exists(dosya_adi):
+                                        existing = pd.read_csv(dosya_adi, header=None)
+                                        new_df = pd.concat([new_df, existing], ignore_index=True)
+                                    new_df.to_csv(dosya_adi, index=False, header=False)
+                                    st.cache_data.clear()
+                                    st.success(f"Başarılı! Veriler {hedef_oyun} sistemine işlendi.")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                else: 
+                                    st.warning("Eksik veya geçersiz sayı girdiniz.")
+                            except: 
+                                st.error("Hatalı format. Lütfen aralarına virgül koyarak yazın.")
+                                
+                with c_btn2:
+                    if os.path.exists(dosya_adi):
+                        if st.button(f"🗑️ {hedef_oyun} Sıfırla", use_container_width=True, key="otop_sifirla_btn"):
+                            os.remove(dosya_adi)
+                            st.cache_data.clear()
+                            st.success(f"{hedef_oyun} otopilot verileri temizlendi!")
+                            time.sleep(1.5)
+                            st.rerun()
 # --- ANA SAYFA ---
 live_data = get_live_results()
 
-if selected_game == "ANA SAYFA":
-    # --- YEPYENİ KOMUTA MERKEZİ KARŞILAMA ALANI ---
+# ==========================================
+# 🏠 ANA SAYFA (CANLI VİTRİN VE MANİFESTO)
+# ==========================================
+# ==========================================
+# 🏠 ANA SAYFA (CANLI VİTRİN VE MANİFESTO)
+# ==========================================
+if selected_game.upper() == "ANA SAYFA":
+    
+    # Sadece bu sayfaya özel loto toplarını ufaltan CSS
     st.markdown("""
-        <div style="background: linear-gradient(to right, #0f172a, #1e3a8a); padding: 35px 30px; border-radius: 15px; margin-bottom: 35px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); border-left: 6px solid #3b82f6;">
-            <h1 style="color: #ffffff; margin: 0; font-weight: 900; letter-spacing: 1px; font-size: 2.2rem;">🌐 YAPAY ZEKA ALGORİTMALARI</h1>
-            <p style="color: #94a3b8; font-size: 17px; margin: 8px 0 0 0; font-weight: 500;">Canlı Çekiliş Sonuçları ve Kuantum Arşiv Senkronizasyonu</p>
+    <style>
+        .home-ball, .home-onnumara-ball {
+            width: 30px !important;
+            height: 30px !important;
+            line-height: 30px !important;
+            font-size: 13px !important;
+            margin: 2px !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # ==========================================
+    # BÖLÜM 1: CANLI ÇEKİLİŞLER VE ARŞİV VİTRİNİ
+    # ==========================================
+    
+    # MİNİMAL VE ORTALANMIŞ AFİŞ
+    st.markdown("""
+        <div style="background: linear-gradient(to right, #0f172a, #1e3a8a); padding: 20px; border-radius: 10px; margin-bottom: 25px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); border-top: 4px solid #3b82f6; text-align: center;">
+            <h2 style="color: #ffffff; margin: 0; font-weight: 900; letter-spacing: 1px; font-size: 1.5rem;">🌐 YAPAY ZEKA ALGORİTMALARI</h2>
+            <p style="color: #94a3b8; font-size: 14px; margin: 5px 0 0 0; font-weight: 500;">Canlı Çekiliş Sonuçları ve Kuantum Arşiv Senkronizasyonu</p>
         </div>
     """, unsafe_allow_html=True)
     
@@ -698,7 +964,7 @@ if selected_game == "ANA SAYFA":
     # 🔴 ÇILGIN SAYISAL LOTO VİTRİNİ
     with c_left:
         s_date, s_nums, s_plus, s_ss, s_prize = determine_status("sayisal", sayisal_archive)
-        s_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:4px 8px; border-radius:6px;'>🟢 {live_data['sayisal']['status']}</span>" if "Canlı" in live_data['sayisal']['status'] and live_data['sayisal']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:4px 8px; border-radius:6px;'>🔴 Bekleniyor</span>"
+        s_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 {live_data['sayisal']['status']}</span>" if "Canlı" in live_data['sayisal']['status'] and live_data['sayisal']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Bekleniyor</span>"
         
         sayisal_opts = [f"🌐 Güncel Ekran"]
         if sayisal_archive: sayisal_opts.extend([item['display_name'] for item in sayisal_archive])
@@ -708,25 +974,25 @@ if selected_game == "ANA SAYFA":
             arc_data = sayisal_archive[st.session_state.ana_sayisal_idx - 1]
             s_nums, s_plus, s_ss = arc_data['nums'], arc_data['plus'], arc_data['superstar']
             s_date = arc_data['display_name']
-            s_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:4px 8px; border-radius:6px;'>🗄️ Arşiv</span>"
+            s_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
             s_prize = ""
 
-        sayisal_html = "".join([f"<div class='home-ball ball-blue'>{n}</div>" for n in s_nums]) if s_nums else "<span style='color:#94a3b8; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
+        sayisal_html = "".join([f"<div class='home-ball ball-blue'>{n}</div>" for n in s_nums]) if s_nums else "<span style='color:#94a3b8; font-size:13px; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
         plus_html = f"<div class='home-ball ball-green'>{s_plus}</div>" if s_plus != "-" else ""
         ss_html = f"<div class='home-ball ball-red'>{s_ss}</div>" if s_ss != "-" else ""
         
         st.markdown(f"""
-        <div style='background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-top: 5px solid #e61532; margin-bottom: 15px;'>
-            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #f1f5f9; padding-bottom: 12px; margin-bottom: 20px;'>
-                <span style='font-size: 1.2rem; font-weight: 900; color: #e61532;'>ÇILGIN SAYISAL LOTO</span>
-                <span style='font-size: 0.85rem;'>{s_status}</span>
+        <div style='background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #e61532; margin-bottom: 10px;'>
+            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px; margin-bottom: 12px;'>
+                <span style='font-size: 1rem; font-weight: 800; color: #e61532;'>ÇILGIN SAYISAL LOTO</span>
+                {s_status}
             </div>
-            <div style='text-align: center; color: #475569; font-weight: 700; margin-bottom: 20px; font-size:15px;'>{s_date}</div>
-            <div style='text-align: center; margin-bottom: 20px;'>
-                {sayisal_html} <span style='font-size: 24px; color: #cbd5e1; font-weight: 900; margin: 0 8px;'>+</span> {plus_html}
+            <div style='text-align: center; color: #64748b; font-weight: 600; margin-bottom: 12px; font-size:13px;'>{s_date}</div>
+            <div style='display: flex; justify-content: center; align-items: center; gap: 3px; margin-bottom: 12px; flex-wrap: wrap;'>
+                {sayisal_html} <span style='font-size: 18px; color: #cbd5e1; font-weight: 900; margin: 0 4px;'>+</span> {plus_html}
             </div>
-            <div style='text-align: center; background-color:#f8fafc; padding:10px; border-radius:8px;'>
-                <span style='color: #e61532; font-weight: 900; margin-right: 15px; font-size: 1.1rem;'>SÜPERSTAR</span>{ss_html}
+            <div style='text-align: center; background-color:#f8fafc; padding:8px; border-radius:6px; display: flex; justify-content: center; align-items: center; gap: 10px;'>
+                <span style='color: #e61532; font-weight: 800; font-size: 0.9rem;'>SÜPERSTAR</span>{ss_html}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -749,7 +1015,7 @@ if selected_game == "ANA SAYFA":
     # 🔵 SÜPER LOTO VİTRİNİ
     with c_right:
         su_date, su_nums, _, _, su_prize = determine_status("super", super_archive)
-        su_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:4px 8px; border-radius:6px;'>🟢 {live_data['super']['status']}</span>" if "Canlı" in live_data['super']['status'] and live_data['super']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:4px 8px; border-radius:6px;'>🔴 Bekleniyor</span>"
+        su_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 {live_data['super']['status']}</span>" if "Canlı" in live_data['super']['status'] and live_data['super']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Bekleniyor</span>"
         
         super_opts = [f"🌐 Güncel Ekran"]
         if super_archive: super_opts.extend([item['display_name'] for item in super_archive])
@@ -759,19 +1025,19 @@ if selected_game == "ANA SAYFA":
             arc_data = super_archive[st.session_state.ana_super_idx - 1]
             su_nums = arc_data['nums']
             su_date = arc_data['display_name']
-            su_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:4px 8px; border-radius:6px;'>🗄️ Arşiv</span>"
+            su_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
             su_prize = ""
 
-        super_html = "".join([f"<div class='home-ball ball-green'>{n}</div>" for n in su_nums]) if su_nums else "<span style='color:#94a3b8; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
+        super_html = "".join([f"<div class='home-ball ball-green'>{n}</div>" for n in su_nums]) if su_nums else "<span style='color:#94a3b8; font-size:13px; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
         
         st.markdown(f"""
-        <div style='background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-top: 5px solid #059669; margin-bottom: 15px; height: 268px;'>
-            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #f1f5f9; padding-bottom: 12px; margin-bottom: 20px;'>
-                <span style='font-size: 1.2rem; font-weight: 900; color: #059669;'>SÜPER LOTO</span>
-                <span style='font-size: 0.85rem;'>{su_status}</span>
+        <div style='background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #059669; margin-bottom: 10px;'>
+            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px; margin-bottom: 12px;'>
+                <span style='font-size: 1rem; font-weight: 800; color: #059669;'>SÜPER LOTO</span>
+                {su_status}
             </div>
-            <div style='text-align: center; color: #475569; font-weight: 700; margin-bottom: 30px; font-size:15px;'>{su_date}</div>
-            <div style='text-align: center; margin-bottom: 20px;'>
+            <div style='text-align: center; color: #64748b; font-weight: 600; margin-bottom: 18px; font-size:13px;'>{su_date}</div>
+            <div style='display: flex; justify-content: center; align-items: center; gap: 3px; margin-bottom: 23px; flex-wrap: wrap;'>
                 {super_html}
             </div>
         </div>
@@ -798,7 +1064,7 @@ if selected_game == "ANA SAYFA":
     # 🟢 ŞANS TOPU VİTRİNİ
     with c_left2:
         st_date, st_nums, st_plus, _, st_prize = determine_status("sans", sans_archive)
-        st_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:4px 8px; border-radius:6px;'>🟢 {live_data['sans']['status']}</span>" if "Canlı" in live_data['sans']['status'] and live_data['sans']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:4px 8px; border-radius:6px;'>🔴 Bekleniyor</span>"
+        st_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 {live_data['sans']['status']}</span>" if "Canlı" in live_data['sans']['status'] and live_data['sans']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Bekleniyor</span>"
         
         sans_opts = [f"🌐 Güncel Ekran"]
         if sans_archive: sans_opts.extend([item['display_name'] for item in sans_archive])
@@ -808,21 +1074,21 @@ if selected_game == "ANA SAYFA":
             arc_data = sans_archive[st.session_state.ana_sans_idx - 1]
             st_nums, st_plus = arc_data['nums'], arc_data['plus']
             st_date = arc_data['display_name']
-            st_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:4px 8px; border-radius:6px;'>🗄️ Arşiv</span>"
+            st_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
             st_prize = ""
 
-        sans_html = "".join([f"<div class='home-ball ball-blue'>{n}</div>" for n in st_nums]) if st_nums else "<span style='color:#94a3b8; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
+        sans_html = "".join([f"<div class='home-ball ball-blue'>{n}</div>" for n in st_nums]) if st_nums else "<span style='color:#94a3b8; font-size:13px; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
         splus_html = f"<div class='home-ball ball-red'>{st_plus}</div>" if st_plus != "-" else ""
         
         st.markdown(f"""
-        <div style='background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-top: 5px solid #0ea5e9; margin-bottom: 15px;'>
-            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #f1f5f9; padding-bottom: 12px; margin-bottom: 20px;'>
-                <span style='font-size: 1.2rem; font-weight: 900; color: #0ea5e9;'>ŞANS TOPU</span>
-                <span style='font-size: 0.85rem;'>{st_status}</span>
+        <div style='background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #0ea5e9; margin-bottom: 10px;'>
+            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px; margin-bottom: 12px;'>
+                <span style='font-size: 1rem; font-weight: 800; color: #0ea5e9;'>ŞANS TOPU</span>
+                {st_status}
             </div>
-            <div style='text-align: center; color: #475569; font-weight: 700; margin-bottom: 20px; font-size:15px;'>{st_date}</div>
-            <div style='text-align: center; margin-bottom: 20px;'>
-                {sans_html} <span style='font-size: 24px; color: #cbd5e1; font-weight: 900; margin: 0 8px;'>+</span> {splus_html}
+            <div style='text-align: center; color: #64748b; font-weight: 600; margin-bottom: 12px; font-size:13px;'>{st_date}</div>
+            <div style='display: flex; justify-content: center; align-items: center; gap: 3px; margin-bottom: 12px; flex-wrap: wrap;'>
+                {sans_html} <span style='font-size: 18px; color: #cbd5e1; font-weight: 900; margin: 0 4px;'>+</span> {splus_html}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -845,7 +1111,7 @@ if selected_game == "ANA SAYFA":
     # 🟠 ON NUMARA VİTRİNİ
     with c_right2:
         on_date, on_nums, _, _, on_prize = determine_status("onnumara", onnumara_archive)
-        on_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:4px 8px; border-radius:6px;'>🟢 {live_data['onnumara']['status']}</span>" if "Canlı" in live_data['onnumara']['status'] and live_data['onnumara']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:4px 8px; border-radius:6px;'>🔴 Bekleniyor</span>"
+        on_status = f"<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 {live_data['onnumara']['status']}</span>" if "Canlı" in live_data['onnumara']['status'] and live_data['onnumara']['nums'] else "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Bekleniyor</span>"
         
         on_opts = [f"🌐 Güncel Ekran"]
         if onnumara_archive: on_opts.extend([item['display_name'] for item in onnumara_archive])
@@ -855,24 +1121,24 @@ if selected_game == "ANA SAYFA":
             arc_data = onnumara_archive[st.session_state.ana_on_idx - 1]
             on_nums = arc_data['nums']
             on_date = arc_data['display_name']
-            on_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:4px 8px; border-radius:6px;'>🗄️ Arşiv</span>"
+            on_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
             on_prize = ""
 
         if on_nums:
             onnumara_html_1 = "".join([f"<div class='home-onnumara-ball'>{n}</div>" for n in on_nums[:11]])
             onnumara_html_2 = "".join([f"<div class='home-onnumara-ball'>{n}</div>" for n in on_nums[11:]])
-            onnumara_html = f"{onnumara_html_1}<div style='height: 6px;'></div>{onnumara_html_2}"
+            onnumara_html = f"<div style='display:flex; justify-content:center; gap:2px; flex-wrap:wrap;'>{onnumara_html_1}</div><div style='height: 4px;'></div><div style='display:flex; justify-content:center; gap:2px; flex-wrap:wrap;'>{onnumara_html_2}</div>"
         else:
-            onnumara_html = "<span style='color:#94a3b8; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
+            onnumara_html = "<span style='color:#94a3b8; font-size:13px; font-style:italic;'>Veri Akışı Bekleniyor...</span>"
             
         st.markdown(f"""
-        <div style='background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-top: 5px solid #d97706; margin-bottom: 15px; height: 236px;'>
-            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed #f1f5f9; padding-bottom: 12px; margin-bottom: 20px;'>
-                <span style='font-size: 1.2rem; font-weight: 900; color: #d97706;'>ON NUMARA</span>
-                <span style='font-size: 0.85rem;'>{on_status}</span>
+        <div style='background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #d97706; margin-bottom: 10px;'>
+            <div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px; margin-bottom: 12px;'>
+                <span style='font-size: 1rem; font-weight: 800; color: #d97706;'>ON NUMARA</span>
+                {on_status}
             </div>
-            <div style='text-align: center; color: #475569; font-weight: 700; margin-bottom: 20px; font-size:15px;'>{on_date}</div>
-            <div style='text-align: center; margin-bottom: 15px;'>
+            <div style='text-align: center; color: #475569; font-weight: 600; margin-bottom: 12px; font-size:13px;'>{on_date}</div>
+            <div style='margin-bottom: 12px;'>
                 {onnumara_html}
             </div>
         </div>
@@ -892,9 +1158,111 @@ if selected_game == "ANA SAYFA":
         with st.expander("💰 Kazananlar ve İkramiye Tablosu"):
             if on_prize: st.markdown(on_prize, unsafe_allow_html=True)
             else: st.info("Bu çekilişin ikramiye detayları arşivde bulunmuyor.")
+    # ==========================================
+    # BÖLÜM 2: VİZYON VE AR-GE MANİFESTOSU
+    # ==========================================
+    st.markdown("<br><hr style='border: 3px solid #e2e8f0; margin-bottom: 40px; margin-top: 20px;'>", unsafe_allow_html=True)
+    
+    st.markdown("<div class='main-title' style='color:#0f172a; font-size: 2.5rem; text-align: center; text-transform: uppercase; letter-spacing: 1px;'>🚀 Kuantum Yapay Zeka Laboratuvarı</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-title' style='color:#64748b; text-align: center; font-size: 1.1rem; margin-bottom: 40px;'>Şans Oyunlarında Tesadüfleri Bitiren Matematiksel Devrim</div>", unsafe_allow_html=True)
+
+    # --- BİZ KİMİZ VE NE YAPIYORUZ? ---
+    st.markdown("""
+    <div style='background-color: #ffffff; border-left: 6px solid #e61532; padding: 25px; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin-bottom: 30px;'>
+        <h2 style='color: #0f172a; margin-top: 0; font-weight: 900;'>BİZ KİMİZ VE NE YAPIYORUZ?</h2>
+        <p style='font-size: 1.1rem; line-height: 1.7; color: #334155;'>
+            Burası sıradan bir "rastgele sayı üretici" veya hislerle çalışan bir tahmin sitesi değildir. Burası, <span style='color: #e61532; font-weight: 900;'>Kuantum Monte Carlo Simülasyonları</span> ve ileri düzey <span style='color: #e61532; font-weight: 900;'>Makine Öğrenmesi (Machine Learning)</span> modellerinin şans oyunları veritabanlarına entegre edildiği <b>profesyonel bir veri analizi laboratuvarıdır.</b>
+        </p>
+        <p style='font-size: 1.1rem; line-height: 1.7; color: #334155;'>
+            Bizim inancımıza göre <b>"Şans", anlaşılamamış matematiğin diğer adıdır.</b> Milyonlarca kombinasyonun havada uçuştuğu loto oyunlarında "tesadüf" dediğimiz şey, aslında devasa bir veri yığınının içinde gizlenmiş algoritmik bir döngüdür. Bizim işimiz; tarihteki tüm çekilişleri saniyeler içinde taramak, sayıların davranış karakterlerini çözmek ve <span style='color: #e61532; font-weight: 900;'>"insan beyninin hesaplayamayacağı" o altın oranlı, kusursuz kolonları</span> sizin için filtrelemektir.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- YAPAY ZEKA MOTORUNUN KALBİ (ALGORİTMALAR) ---
+    st.markdown("<h2 style='text-align:center; color:#0f172a; font-weight:900; margin-top:40px; margin-bottom:25px;'>🧠 YAPAY ZEKA MOTORUMUZUN KALBİ</h2>", unsafe_allow_html=True)
+
+    c1_man, c2_man = st.columns(2)
+    
+    with c1_man:
+        st.markdown("""
+        <div style='background-color: #f8fafc; border: 2px solid #cbd5e1; padding: 20px; border-radius: 12px; height: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+            <h3 style='color: #1e3a8a; margin-top: 0; font-weight: 900;'>🧬 Markov Zinciri Analizi</h3>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                <b>Peki kimdir bu Markov? Neyi başarmıştır?</b><br>
+                <span style='color: #0f172a; font-weight: 900;'>Andrey Markov</span>, 1900'lerin başında yaşamış efsanevi bir Rus matematikçidir. Markov, "bağımsız" gibi görünen rastgele olayların aslında birbirini etkilediğini, <b>"bir sonraki adımın, sadece ve sadece bir önceki adıma bağlı olduğunu"</b> kanıtlayarak istatistik dünyasında devrim yapmıştır. 
+            </p>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                <b>Sistemimizde Nasıl Çalışır?</b><br>
+                Makine, loto çekilişlerini bir "durum" (state) olarak görür. Eğer geçen hafta frekanslar <span style='color: #e61532; font-weight: 900;'>"3 Sıcak, 2 Orta, 1 Soğuk"</span> geldiyse; sistem tarihe dalar ve Markov Geçiş Matrisi'ni kullanarak <i>"Bu şablondan sonraki hafta sayıların % kaç ihtimalle tek/çift, % kaç ihtimalle ardışık geleceğini"</i> kusursuz bir yüzdelik tahminle ekrana yansıtır.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c2_man:
+        st.markdown("""
+        <div style='background-color: #f8fafc; border: 2px solid #cbd5e1; padding: 20px; border-radius: 12px; height: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+            <h3 style='color: #b91c1c; margin-top: 0; font-weight: 900;'>⚔️ Apriori (Düşman İkili) Algoritması</h3>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                Orijinalinde küresel market zincirlerinin "Sepet Analizi" için kullandığı bir kural madenciliği algoritmasıdır. Biz bu yapay zeka birimini, sayıların <span style='color: #0f172a; font-weight: 900;'>"Nefret İlişkisini"</span> bulmak için loto veritabanına entegre ettik.
+            </p>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                <b>Sistemimizde Nasıl Çalışır?</b><br>
+                Oyun tarihinde bugüne kadar <b>hiç yan yana gelmemiş</b> veya birbirini adeta iten "zehirli sayı kombinasyonları" tespit edilir. Motorumuz kolon üretirken bu düşman ikilileri asla aynı kupona koymaz, <span style='color: #e61532; font-weight: 900;'>matematiksel çelişkileri acımasızca imha eder.</span>
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    c3_man, c4_man = st.columns(2)
+
+    with c3_man:
+        st.markdown("""
+        <div style='background-color: #f8fafc; border: 2px solid #cbd5e1; padding: 20px; border-radius: 12px; height: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+            <h3 style='color: #047857; margin-top: 0; font-weight: 900;'>🛡️ K-Means Kümeleme (Klan Zırhı)</h3>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                Sayılar sadece rakamlardan ibaret değildir; onların da bir karakteri, çıkma ivmesi (momentum) ve kapsama alanları vardır. Gözetimsiz bir Makine Öğrenmesi metodu olan K-Means algoritması, <b>tüm sayıları fiziksel özelliklerine göre 4 veya 5 farklı kampa (Klana) ayırır.</b>
+            </p>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                Sistem, kolonlarınızı üretirken tüm topları aynı klandan seçmek yerine, her klandan en güçlü genleri alarak kuponunuza bir <span style='color: #0f172a; font-weight: 900;'>"Klan Zırhı"</span> giydirir. Dağılım ne kadar çeşitliyse, vurma ihtimali o kadar yükselir.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c4_man:
+        st.markdown("""
+        <div style='background-color: #f8fafc; border: 2px solid #cbd5e1; padding: 20px; border-radius: 12px; height: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+            <h3 style='color: #d97706; margin-top: 0; font-weight: 900;'>📉 Çan Eğrisi (Normal Dağılım)</h3>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                Dünyadaki her kaotik olayın bir merkezi, bir yerçekimi noktası vardır. Buna istatistikte <b>"Gauss Dağılımı"</b> veya Çan Eğrisi denir. 
+            </p>
+            <p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>
+                Örneğin Çılgın Sayısal Loto'da çekilen 6 sayının toplamı <span style='color: #e61532; font-weight: 900;'>%80 ihtimalle 240 ile 310</span> arasında (Kalbi 273'tür) gerçekleşir. Sihirli Otopilot motorumuz, size kolon üretirken saniyeler içinde binlerce <b>Monte Carlo simülasyonu</b> yapar ve toplamı oyunun matematiksel kalbine (Çan eğrisinin tam ortasına) oturmayan HİÇBİR kolonu size göstermez.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("<br><hr style='border: 2px dashed #cbd5e1; margin-bottom: 30px;'>", unsafe_allow_html=True)
+    
+    # --- NASIL BAŞLARIM? (CALL TO ACTION) ---
+    st.markdown("""
+    <div style='background-color: #0f172a; padding: 30px; border-radius: 12px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3);'>
+        <h2 style='color: #f8fafc; margin-top: 0; font-weight: 900; letter-spacing: 1px;'>🚀 ŞİMDİ SİHRİ BAŞLATIN</h2>
+        <p style='color: #cbd5e1; font-size: 1.15rem; margin-bottom: 25px;'>
+            Matematiğin gücünü kendi gözlerinizle görmek için sol menüden oynamak istediğiniz oyunu seçin. İster kuralları kendiniz koyun, isterseniz tüm yetkiyi <b>Sihirli Yapay Zeka Otopilotuna</b> bırakın.
+        </p>
+        <div style='display:inline-block; background-color:#10b981; color:white; font-weight:900; padding:12px 30px; border-radius:30px; font-size:1.1rem; border: 2px solid #059669;'>
+            👈 SOL MENÜDEN BİR OYUN SEÇEREK ANALİZ MERKEZİNE GİRİŞ YAPIN
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 # ==========================================
 # 🔴 1. MODÜL: ÇILGIN SAYISAL LOTO
 # ==========================================
+# ==========================================
+# ==========================================
+# 🎫 KUPONLARIM & KAZANÇ MERKEZİ (VERİTABANI BAĞLANTILI)
 # ==========================================
 # ==========================================
 # 🎫 KUPONLARIM & KAZANÇ MERKEZİ (VERİTABANI BAĞLANTILI)
@@ -1049,18 +1417,31 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
         def is_enemy(n1, n2):
             return (min(n1, n2), max(n1, n2)) in enemies
 
-        st.sidebar.markdown("## ⚙️ SAYISAL LOTO FİLTRELERİ")
+        st.sidebar.markdown("## ⚙️ ÇILGIN SAYISAL FİLTRELERİ (Hibrit Zırh)")
 
-        with st.sidebar.expander("📊 0. Temel Frekans", expanded=True):
-            sc1, sc2, sc3 = st.columns(3)
-            s_hedef = sc1.number_input("Sıcak", 0, 6, 2, key="ss_s")
-            o_hedef = sc2.number_input("Orta", 0, 6, 3, key="ss_o")
-            c_hedef = sc3.number_input("Soğuk", 0, 6, 1, key="ss_c")
+        with st.sidebar.expander("📊 Temel Frekans", expanded=True):
+            f_map = {
+                "Dengeli: 2 Sıcak - 2 Orta - 2 Soğuk": (2, 2, 2),
+                "Altın Oran: 2 Sıcak - 3 Orta - 1 Soğuk": (2, 3, 1),
+                "Altın Oran: 3 Sıcak - 2 Orta - 1 Soğuk": (3, 2, 1),
+                "Orta Ağırlıklı: 1 Sıcak - 3 Orta - 2 Soğuk": (1, 3, 2),
+                "Sıcak Ağırlıklı: 3 Sıcak - 1 Orta - 2 Soğuk": (3, 1, 2),
+                "Soğuk Ağırlıklı: 2 Sıcak - 1 Orta - 3 Soğuk": (2, 1, 3),
+                "Soğuk Ağırlıklı: 1 Sıcak - 2 Orta - 3 Soğuk": (1, 2, 3),
+                "Ekstrem Sıcak: 4 Sıcak - 1 Orta - 1 Soğuk": (4, 1, 1),
+                "Ekstrem Orta: 1 Sıcak - 4 Orta - 1 Soğuk": (1, 4, 1),
+                "Ekstrem Soğuk: 1 Sıcak - 1 Orta - 4 Soğuk": (1, 1, 4),
+                "Full Sıcak: 6 Sıcak - 0 Orta - 0 Soğuk": (6, 0, 0),
+                "Full Orta: 0 Sıcak - 6 Orta - 0 Soğuk": (0, 6, 0),
+                "Full Soğuk: 0 Sıcak - 0 Orta - 6 Soğuk": (0, 0, 6)
+            }
+            frekans_secim = st.selectbox("Sıcak - Orta - Soğuk Dağılımı", list(f_map.keys()), key="ss_frekans")
+            sicak_hedef, orta_hedef, soguk_hedef = f_map[frekans_secim]
 
         with st.sidebar.expander("1. Tek/Çift Refleksi", expanded=True):
-            tc1, tc2 = st.columns(2)
-            tek_hedef = tc1.number_input("Tek", 0, 6, 3, key="ss_t")
-            cift_hedef = tc2.number_input("Çift", 0, 6, 3, key="ss_ct")
+            tek_hedef = st.slider("Tek Sayı Adedi (Kalanı Çift Olur)", 0, 6, 3, key="ss_t")
+            cift_hedef = 6 - tek_hedef
+            st.info(f"Sistem Kilitlendi: {tek_hedef} Tek, {cift_hedef} Çift")
 
         with st.sidebar.expander("2. Ardışık & 3. Kök Refleksi", expanded=True):
             c_strat1, c_strat2 = st.columns(2)
@@ -1069,7 +1450,6 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
 
         with st.sidebar.expander("4. Devir Refleksi", expanded=True):
             devir_secimi = st.selectbox("Devir (Önceki Haftadan)", [
-                "Farketmez", 
                 "YOK (Önceki haftadan sayı gelmesin)", 
                 "VAR (Sistem rastgele 1 sayı seçsin)", 
                 "VAR (Sayıyı ben seçeceğim)"
@@ -1085,10 +1465,13 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
             bolge1 = bc1.number_input("Alt (1-30)", 0, 6, 2, key="ss_b1")
             bolge2 = bc2.number_input("Orta (31-60)", 0, 6, 2, key="ss_b2")
             bolge3 = bc3.number_input("Üst (61-90)", 0, 6, 2, key="ss_b3")
+            
+            if (bolge1 + bolge2 + bolge3) != 6:
+                st.error(f"🚨 HATA: Bölge toplamı 6 olmalı! (Şu anki toplam: {bolge1 + bolge2 + bolge3})")
 
         with st.sidebar.expander("🛡️ Ekstra Kısıtlamalar (Çan vb.)", expanded=False):
-            min_toplam, max_toplam = st.slider("Çan Eğrisi (Toplam)", 21, 525, (200, 340), key="ss_can")
-            min_kapsam, max_kapsam = st.slider("Kapsam (Mesafe)", 5, 89, (35, 75), key="ss_mes")
+            min_toplam, max_toplam = st.slider("Çan Eğrisi (Toplam)", 21, 525, (160, 390), key="ss_can")
+            min_kapsam, max_kapsam = st.slider("Kapsam (Mesafe)", 5, 89, (35, 89), key="ss_mes")
             yasak_sayilar_str = st.text_input("Yasaklılar (Virgülle ayırın)", key="ss_yasak")
             banko_sayilar_str = st.text_input("Banko Sayılar (Mutlaka Olsun)", key="ss_banko")
 
@@ -1123,84 +1506,175 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
             elif counts == [2, 1, 1, 1, 1]: return "1 Çift Kök"
             else: return "Çoklu/Çifte Kök"
 
-        # --- ÜRETİM ALANI (EN ÜSTTE VE ORTADA) ---
+        # --- ÜRETİM ALANI (SİHİRLİ BUTON VE MANUEL SEÇİM) ---
         st.info(f"{msg} | **Son Çekiliş:** {valid_draws[0]}")
         st.markdown("---")
-
+    
         if "sayisal_uretim_ekrani_acik" not in st.session_state:
             st.session_state.sayisal_uretim_ekrani_acik = False
-
-        if "sayisal_aktif_kuponlar" not in st.session_state:
-            st.session_state.sayisal_aktif_kuponlar = []
+        if "sayisal_ai_uretim_ekrani_acik" not in st.session_state:
+            st.session_state.sayisal_ai_uretim_ekrani_acik = False
+            
+        if "sayisal_manuel_sayaci" not in st.session_state:
+            st.session_state.sayisal_manuel_sayaci = 0
+        if "sayisal_ai_sayaci" not in st.session_state:
+            st.session_state.sayisal_ai_sayaci = 0
 
         sayisal_basla_btn = False
+        sayisal_ai_basla_btn = False
         sayisal_kolon_sayisi = 1
-
-        if not st.session_state.sayisal_uretim_ekrani_acik:
-            c_btn_sol, c_btn_orta, c_btn_sag = st.columns([1, 2, 1])
-            with c_btn_orta:
-                if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", type="primary", use_container_width=True, key="sayisal_btn_1"):
-                    st.session_state.sayisal_uretim_ekrani_acik = True
-                    st.rerun() 
         
-        if st.session_state.sayisal_uretim_ekrani_acik:
-            st.markdown("""
-                <div style='border: 3px solid #1e3a8a; border-radius: 12px; padding: 20px; background-color: #f8fafc; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.15); margin-bottom: 20px;'>
-                    <h3 style='color: #1e3a8a; margin-top: 0; font-weight: 900; text-align: center; letter-spacing: 1px;'>🤖 KUSURSUZ ÜRETİM ONAYI</h3>
-                    <p style='color: #334155; text-align: center; font-size: 16px; font-weight: 600; margin-bottom: 0px;'>Yapay Zeka'nın sizin için kaç adet Çılgın Sayısal Loto kolonu üretmesini istersiniz?</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
-            
-            with c_orta:
-                st.markdown("<div style='background-color:#1e3a8a; border:2px solid #0f172a; padding:10px; border-radius:8px; text-align:center; font-weight:900; color:#ffffff; font-size:16px; margin-bottom:5px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); letter-spacing: 1px;'>🔢 KOLON ADEDİ SEÇİN</div>", unsafe_allow_html=True)
-                sayisal_kolon_sayisi = st.number_input("Kolon Adedi", min_value=1, max_value=10, value=1, label_visibility="collapsed", key="sayisal_kolon_adet")
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                sayisal_basla_btn = st.button("✅ MOTORU ATEŞLE VE ÜRET", type="primary", use_container_width=True, key="sayisal_btn_basla")
-            with col_btn2:
-                iptal_btn = st.button("❌ İPTAL", use_container_width=True, key="sayisal_btn_iptal")
-                
-            if iptal_btn:
-                st.session_state.sayisal_uretim_ekrani_acik = False
-                st.rerun()
+        is_vip_or_admin = st.session_state.get("is_vip", False) or st.session_state.get("user_email", "") == "admin@kaptan.com"
+        
+        manuel_hakkini_doldurdu = not is_vip_or_admin and st.session_state.sayisal_manuel_sayaci >= 1
+        ai_hakkini_doldurdu = not is_vip_or_admin and st.session_state.sayisal_ai_sayaci >= 1
 
-        if sayisal_basla_btn:
+        if not st.session_state.sayisal_uretim_ekrani_acik and not st.session_state.sayisal_ai_uretim_ekrani_acik:
+            if manuel_hakkini_doldurdu and ai_hakkini_doldurdu:
+                st.error("🔒 Ücretsiz deneme haklarınızı doldurdunuz! Sınırsız üretim yapmak ve tüm kuantum filtrelerini özgürce kullanmak için VIP üyeliğe geçin.")
+                if st.button("👑 VIP ÜYELİK AYRICALIKLARI", use_container_width=True):
+                    pass
+            else:
+                st.markdown("<h4 style='text-align:center; color:#1e293b; font-weight:900;'>Kuponunuzu Nasıl Üretmek İstersiniz?</h4>", unsafe_allow_html=True)
+                c_btn_sol, c_btn_sag = st.columns(2)
+                
+                with c_btn_sol:
+                    st.markdown("""
+                    <div style='background-color:#f1f5f9; padding:15px; border-radius:8px; border:2px solid #cbd5e1; text-align:center; margin-bottom:10px;'>
+                        <h5 style='color:#334155; margin-top:0;'>🎛️ MANUEL FİLTRELERLE</h5>
+                        <p style='font-size:12px; color:#64748b; margin-bottom:0;'>Sol menüdeki kendi belirlediğiniz kurallara sadık kalarak üretim yapar.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if manuel_hakkini_doldurdu:
+                        st.warning("🔒 Manuel üretim hakkınızı kullandınız.")
+                    else:
+                        if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", use_container_width=True, key="btn_manuel_sayisal"):
+                            st.session_state.sayisal_uretim_ekrani_acik = True
+                            st.rerun()
+                        
+                with c_btn_sag:
+                    st.markdown("""
+                    <div style='background-color:#ecfdf5; padding:15px; border-radius:8px; border:2px solid #059669; text-align:center; margin-bottom:10px;'>
+                        <h5 style='color:#059669; margin-top:0; font-weight:900;'>🪄 YAPAY ZEKAYA DEVRET</h5>
+                        <p style='font-size:12px; color:#064e3b; margin-bottom:0;'>Filtrelerle uğraşmayın! Makine tüm geçmişi tarayıp en ideal altın oranlı kuponu bulsun.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if ai_hakkini_doldurdu:
+                        st.warning("🔒 Sihirli Oto-Pilot hakkınızı kullandınız.")
+                    else:
+                        if st.button("✨ SİHİRLİ OTOPİLOT İLE ÜRET", type="primary", use_container_width=True, key="btn_ai_sayisal"):
+                            st.session_state.sayisal_ai_uretim_ekrani_acik = True
+                            st.rerun()
+
+        if st.session_state.sayisal_uretim_ekrani_acik:
+            st.markdown("<div style='border: 3px solid #64748b; border-radius: 12px; padding: 20px; background-color: #f8fafc; text-align: center; margin-bottom: 20px;'><h3 style='color: #334155; margin-top: 0;'>🎛️ MANUEL ÜRETİM ONAYI</h3><p style='margin-bottom:0;'>Çılgın Sayısal Loto kolon adedini belirleyin.</p></div>", unsafe_allow_html=True)
+            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
+            with c_orta:
+                max_kolon_hakki = 100 if is_vip_or_admin else 3
+                sayisal_kolon_sayisi = st.number_input(f"Kolon Adedi (Maksimum {max_kolon_hakki})", min_value=1, max_value=max_kolon_hakki, value=1, key="manuel_adet_sayisal")
+                if not is_vip_or_admin:
+                    st.info("💡 Ziyaretçiler ve Standart üyeler manuel olarak en fazla 3 kolon üretebilir. Sınırsız üretim için VIP'ye geçin.")
+                
+                col_m1, col_m2 = st.columns(2)
+                with col_m1: sayisal_basla_btn = st.button("✅ ÜRET", type="primary", use_container_width=True, key="sayisal_basla_m")
+                with col_m2: 
+                    if st.button("❌ İPTAL", use_container_width=True, key="iptal_m_sayisal"):
+                        st.session_state.sayisal_uretim_ekrani_acik = False
+                        st.rerun()
+
+        if st.session_state.sayisal_ai_uretim_ekrani_acik:
+            st.markdown("<div style='border: 3px solid #e11d48; border-radius: 12px; padding: 20px; background-color: #fff1f2; text-align: center; margin-bottom: 20px;'><h3 style='color: #e11d48; margin-top: 0;'>🪄 YAPAY ZEKA OTO-PİLOT ONAYI</h3><p style='margin-bottom:0;'>Makine Çılgın Sayısal Loto DNA'sını sizin için optimize edecek.</p></div>", unsafe_allow_html=True)
+            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
+            with c_orta:
+                max_ai_hakki = 100 if is_vip_or_admin else 1
+                sayisal_kolon_sayisi = st.number_input(f"Kolon Adedi (Maksimum {max_ai_hakki})", min_value=1, max_value=max_ai_hakki, value=1, key="ai_adet_sayisal")
+                if not is_vip_or_admin:
+                    st.warning("👑 Sihirli buton ziyaretçiler için 1 kolonla sınırlıdır. Tüm kuponu yapay zekaya doldurtmak için VIP'ye geçin.")
+                
+                col_a1, col_a2 = st.columns(2)
+                with col_a1: sayisal_ai_basla_btn = st.button("✨ SİHRİ BAŞLAT", type="primary", use_container_width=True, key="sayisal_basla_ai")
+                with col_a2: 
+                    if st.button("❌ İPTAL", use_container_width=True, key="iptal_a_sayisal"):
+                        st.session_state.sayisal_ai_uretim_ekrani_acik = False
+                        st.rerun()
+
+        # ÜRETİM MOTORU
+        if sayisal_basla_btn or sayisal_ai_basla_btn:
+            if not is_vip_or_admin:
+                if sayisal_basla_btn:
+                    st.session_state.sayisal_manuel_sayaci += 1
+                if sayisal_ai_basla_btn:
+                    st.session_state.sayisal_ai_sayaci += 1
+                
             st.session_state.sayisal_uretim_ekrani_acik = False 
+            st.session_state.sayisal_ai_uretim_ekrani_acik = False
+            
             with st.spinner('Kuantum eleme motoru ve Yapay Zeka zırhı devrede...'):
-                time.sleep(0.5)
+                time.sleep(1)
                 
                 last_draw_nums = valid_draws[0]
                 devirler = []
                 ekstra_yasaklar = []
-                
-                if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
-                    ekstra_yasaklar.extend(last_draw_nums)
-                elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
-                    devirler = [int(x.strip()) for x in devir_sayisi_str.split(',') if x.strip().isdigit()]
-                
-                yasaklar_input = [int(x.strip()) for x in yasak_sayilar_str.split(',') if x.strip().isdigit()]
-                yasaklar = list(set(yasaklar_input + ekstra_yasaklar))
-                
-                bankolar = [int(x.strip()) for x in banko_sayilar_str.split(',') if x.strip().isdigit()]
-                sabit_sayilar = list(set(devirler + bankolar))
-                
+                yasaklar = []
+                sabit_sayilar = []
                 errors = []
-                if s_hedef + o_hedef + c_hedef != 6: errors.append("Sıcak+Orta+Soğuk = 6 olmalı.")
-                if tek_hedef + cift_hedef != 6: errors.append("Tek+Çift = 6 olmalı.")
-                if bolge1 + bolge2 + bolge3 != 6: errors.append("Alt+Orta+Üst Bölge toplamı 6 olmalı.")
-                if len(sabit_sayilar) > 6: errors.append("Banko ve Devir sayılarının toplamı 6'yı geçemez.")
-                for s in sabit_sayilar:
-                    if s in yasaklar: errors.append(f"Hata: {s} sayısı hem Banko/Devir hem de Yasaklı listesinde olamaz!")
                 
-                if devir_secimi == "VAR (Sayıyı ben seçeceğim)":
-                    for d in devirler:
-                        if d not in last_draw_nums:
-                            errors.append(f"Hata: Girdiğiniz '{d}' sayısı geçen haftanın çekilişinde yok! Lütfen geçerli bir devir sayısı girin: {last_draw_nums}")
+                if sayisal_ai_basla_btn:
+                    aktif_havuz = hot_nums[:15] if len(hot_nums) >= 15 else hot_nums
+                    trend_devir_var_mi = any(x in hot_nums[:30] for x in last_draw_nums)
+                    devir_secimi = "VAR (Sistem rastgele 1 sayı seçsin)" if trend_devir_var_mi else "YOK (Önceki haftadan sayı gelmesin)"
+                    
+                    ai_tek = sum(1 for x in aktif_havuz if x % 2 != 0)
+                    ai_tek_orani = round((ai_tek / len(aktif_havuz)) * 6) if len(aktif_havuz) > 0 else 3
+                    tek_hedef = max(1, min(5, ai_tek_orani))
+                    cift_hedef = 6 - tek_hedef
+                    
+                    ai_b1 = sum(1 for x in aktif_havuz if 1 <= x <= 30)
+                    ai_b2 = sum(1 for x in aktif_havuz if 31 <= x <= 60)
+                    ai_b3 = sum(1 for x in aktif_havuz if 61 <= x <= 90)
+                    toplam_b = ai_b1 + ai_b2 + ai_b3
+                    
+                    if toplam_b > 0:
+                        bolge1 = round((ai_b1 / toplam_b) * 6)
+                        bolge2 = round((ai_b2 / toplam_b) * 6)
+                        bolge3 = 6 - (bolge1 + bolge2)
+                        if bolge1 < 0 or bolge2 < 0 or bolge3 < 0: bolge1, bolge2, bolge3 = 2, 2, 2
+                    else:
+                        bolge1, bolge2, bolge3 = 2, 2, 2
+                        
+                    ai_roots = [x % 10 for x in aktif_havuz]
+                    ai_root_counts = list(Counter(ai_roots).values())
+                    kese_koku = "VAR (1 Çift)" if any(c > 1 for c in ai_root_counts) else "YOK"
+                    
+                    sirali_aktif = sorted(aktif_havuz)
+                    has_hot_cons = any(sirali_aktif[i] + 1 == sirali_aktif[i+1] for i in range(len(sirali_aktif)-1))
+                    ardisik = "VAR" if has_hot_cons else "YOK"
+
+                    sicak_hedef, orta_hedef, soguk_hedef = 3, 2, 1
+                    min_toplam, max_toplam = 140, 420 
+                    min_kapsam, max_kapsam = 35, 89
+                else:
+                    if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
+                        ekstra_yasaklar.extend(last_draw_nums)
+                    elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                        devirler = [int(x.strip()) for x in devir_sayisi_str.split(',') if x.strip().isdigit()]
+                    
+                    yasaklar_input = [int(x.strip()) for x in yasak_sayilar_str.split(',') if x.strip().isdigit()]
+                    yasaklar = list(set(yasaklar_input + ekstra_yasaklar))
+                    
+                    bankolar = [int(x.strip()) for x in banko_sayilar_str.split(',') if x.strip().isdigit()]
+                    sabit_sayilar = list(set(devirler + bankolar))
+
+                    if tek_hedef + cift_hedef != 6: errors.append("Tek+Çift = 6 olmalı.")
+                    if bolge1 + bolge2 + bolge3 != 6: errors.append("Alt+Orta+Üst Bölge toplamı 6 olmalı.")
+                    if len(sabit_sayilar) > 6: errors.append("Banko ve Devir sayılarının toplamı 6'yı geçemez.")
+                    for s in sabit_sayilar:
+                        if s in yasaklar: errors.append(f"Hata: {s} sayısı hem Banko/Devir hem de Yasaklı listesinde olamaz!")
+                    
+                    if devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                        for d in devirler:
+                            if d not in last_draw_nums:
+                                errors.append(f"Hata: Girdiğiniz '{d}' sayısı geçen haftanın çekilişinde yok! Lütfen geçerli bir devir sayısı girin: {last_draw_nums}")
 
                 if errors:
                     for e in errors: st.error(e)
@@ -1216,9 +1690,9 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
                     b_med = sum(1 for x in sabit_sayilar if x in medium_nums)
                     b_cold = sum(1 for x in sabit_sayilar if x in cold_nums)
 
-                    req_hot = s_hedef - b_hot
-                    req_med = o_hedef - b_med
-                    req_cold = c_hedef - b_cold
+                    req_hot = sicak_hedef - b_hot
+                    req_med = orta_hedef - b_med
+                    req_cold = soguk_hedef - b_cold
 
                     if req_hot < 0 or req_med < 0 or req_cold < 0:
                         st.error("🚨 HATA: Banko sayılarının frekansları, belirlediğin hedefleri aşıyor!")
@@ -1227,74 +1701,120 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
                     else:
                         candidates = []
                         valid_combinations = []
-                        attempts = 0
-                        
-                        while len(candidates) < 100000 and attempts < 200000:
-                            attempts += 1
-                            h_pick = random.sample(hot_pool, req_hot) if req_hot > 0 else []
-                            m_pick = random.sample(med_pool, req_med) if req_med > 0 else []
-                            c_pick = random.sample(cold_pool, req_cold) if req_cold > 0 else []
-                            col = sorted(sabit_sayilar + h_pick + m_pick + c_pick)
-                            if len(set(col)) == 6:
-                                candidates.append(tuple(col))
-                        
-                        candidates = list(set(candidates))
-                        
-                        for col in candidates:
-                            if devir_secimi == "VAR (Sistem rastgele 1 sayı seçsin)":
-                                ortak_sayi_adedi = sum(1 for x in col if x in last_draw_nums)
-                                if ortak_sayi_adedi != 1: 
-                                    continue
+                        hata_kodlari = {
+                            "frekans_havuzu": 0, "devir": 0, "tek_cift": 0, 
+                            "bolge": 0, "kok": 0, "ardisik": 0, "can_kapsam": 0
+                        }
 
-                            b1 = sum(1 for x in col if 1 <= x <= 30)
-                            b2 = sum(1 for x in col if 31 <= x <= 60)
-                            b3 = sum(1 for x in col if 61 <= x <= 90)
-                            if b1 != bolge1 or b2 != bolge2 or b3 != bolge3: continue
+                        attempts = 0
+                        max_attempts = 150000 
+
+                        while len(valid_combinations) < (sayisal_kolon_sayisi * 3) and attempts < max_attempts:
+                            attempts += 1
                             
+                            h_pick = random.sample(hot_pool, min(sicak_hedef, len(hot_pool))) if sicak_hedef > 0 else []
+                            m_pick = random.sample(med_pool, min(orta_hedef, len(med_pool))) if orta_hedef > 0 else []
+                            c_pick = random.sample(cold_pool, min(soguk_hedef, len(cold_pool))) if soguk_hedef > 0 else []
+                            
+                            col = sorted(sabit_sayilar + h_pick + m_pick + c_pick)
+                            
+                            if len(set(col)) != 6: 
+                                hata_kodlari["frekans_havuzu"] += 1
+                                continue
+                                
                             tek = sum(1 for x in col if x % 2 != 0)
-                            cift = 6 - tek
-                            if tek != tek_hedef or cift != cift_hedef: continue
-                            
-                            has_cons = any(col[i]+1 == col[i+1] for i in range(5))
-                            if (ardisik == "VAR" and not has_cons) or (ardisik == "YOK" and has_cons): continue
-                            
+                            if tek != tek_hedef: 
+                                hata_kodlari["tek_cift"] += 1
+                                continue
+                                
+                            b1 = sum(1 for x in col if 1 <= x <= 30)
+                            if b1 != bolge1:
+                                hata_kodlari["bolge"] += 1
+                                continue
+                                
+                            b2 = sum(1 for x in col if 31 <= x <= 60)
+                            if b2 != bolge2:
+                                hata_kodlari["bolge"] += 1
+                                continue
+                                
+                            b3 = 6 - (b1 + b2)
+                            if b3 != bolge3: 
+                                hata_kodlari["bolge"] += 1
+                                continue
+
                             roots = [x % 10 for x in col]
-                            r_counts = list(Counter(roots).values())
-                            r_counts.sort(reverse=True)
+                            unique_roots = len(set(roots))
                             
                             if kese_koku == "VAR (1 Çift)":
-                                if r_counts != [2, 1, 1, 1, 1]: continue
-                            else:
-                                if r_counts != [1, 1, 1, 1, 1, 1]: continue
+                                if unique_roots != 5: 
+                                    hata_kodlari["kok"] += 1
+                                    continue
+                            elif kese_koku == "YOK":
+                                if unique_roots != 6: 
+                                    hata_kodlari["kok"] += 1
+                                    continue
+
+                            cons_count = 0
+                            for i in range(5):
+                                if col[i] + 1 == col[i+1]:
+                                    cons_count += 1
+                                    
+                            if cons_count > 1: 
+                                hata_kodlari["ardisik"] += 1
+                                continue
+                                
+                            has_cons = (cons_count == 1)
+
+                            if (ardisik == "VAR" and not has_cons) or (ardisik == "YOK" and has_cons): 
+                                hata_kodlari["ardisik"] += 1
+                                continue
+
+                            toplam = sum(col)
+                            if not (min_toplam <= toplam <= max_toplam):
+                                hata_kodlari["can_kapsam"] += 1
+                                continue
+                                
+                            if not (min_kapsam <= (col[-1] - col[0]) <= max_kapsam):
+                                hata_kodlari["can_kapsam"] += 1
+                                continue
+
+                            if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
+                                if any(x in last_draw_nums for x in col): 
+                                    hata_kodlari["devir"] += 1
+                                    continue
+                            elif devir_secimi == "VAR (Sistem rastgele 1 sayı seçsin)":
+                                if sum(1 for x in col if x in last_draw_nums) != 1: 
+                                    hata_kodlari["devir"] += 1
+                                    continue
+                            elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                                try:
+                                    ds = int(devir_sayisi_str)
+                                    if ds not in col or sum(1 for x in col if x in last_draw_nums) != 1: 
+                                        hata_kodlari["devir"] += 1
+                                        continue
+                                except: 
+                                    pass
+
+                            dusman_skoru = sum(1 for pair in combinations(col, 2) if is_enemy(pair[0], pair[1]))
+                            klan_cesitliligi = len(set([klan_labels.get(x, 0) for x in col]))
                             
-                            enemy_found = False
-                            for pair in combinations(col, 2):
-                                if is_enemy(pair[0], pair[1]):
-                                    enemy_found = True
-                                    break
-                            if enemy_found: continue
-                            
-                            if not (min_toplam <= sum(col) <= max_toplam): continue
-                            if not (min_kapsam <= (col[-1] - col[0]) <= max_kapsam): continue
-                            
-                            klan_cesitliligi = len(set([klan_labels[x] for x in col if x in klan_labels]))
                             valid_combinations.append({
-                                'c': col, 'sum': sum(col), 'klan': klan_cesitliligi
+                                'c': tuple(col), 'sum': sum(col), 'klan': klan_cesitliligi, 'dusman_sayisi': dusman_skoru
                             })
+                            
+                            unique_v = {v['c']: v for v in valid_combinations}.values()
+                            valid_combinations = list(unique_v)
 
                         if len(valid_combinations) > 0:
-                            valid_combinations.sort(key=lambda x: (-x['klan'], abs(x['sum'] - 273)))
-                            
+                            valid_combinations.sort(key=lambda x: (x['dusman_sayisi'], -x['klan'], abs(x['sum'] - 273)))
                             gosterilecek_adet = min(sayisal_kolon_sayisi, len(valid_combinations))
-                        
-                            if gosterilecek_adet < sayisal_kolon_sayisi:
-                                st.warning(f"Sadece {len(valid_combinations)} kusursuz dizilim bulunabildi. Kurallarınız çok katı olduğu için {sayisal_kolon_sayisi} adet kolon oluşturulamadı. Bulunanların tamamı aşağıdadır:")
-                            else:
-                                st.success(f"Tüm ağır filtreler aşıldı! Havuzdaki {len(valid_combinations)} kusursuz dizilim arasından EN İYİ {gosterilecek_adet} kolon seçildi.")
+                            
+                            st.success(f"Tüm katı filtreler başarıyla aşıldı! En kusursuz {gosterilecek_adet} kolon kurgulandı.")
 
                             for i in range(gosterilecek_adet):
                                 secilen = valid_combinations[i]['c']
                                 klan_degeri = valid_combinations[i]['klan']
+                                d_skor = valid_combinations[i]['dusman_sayisi']
                                 
                                 if sayisal_kolon_sayisi > 1:
                                     st.markdown(f"<h4 style='color:#dc2626; text-align:center; margin-top:20px; font-weight:900; background-color:#fef2f2; padding:5px; border-radius:5px;'>✨ KOLON {i+1}</h4>", unsafe_allow_html=True)
@@ -1311,407 +1831,423 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
                                 """
                                 st.markdown(html_balls, unsafe_allow_html=True)
                                 
+                                dusman_etiketi = f"{d_skor} (Esnetildi)" if d_skor > 0 else "0 (Temiz)"
+                                renk = "#eab308" if d_skor > 0 else "#22c55e"
+                                
                                 mc1, mc2, mc3, mc4 = st.columns(4)
                                 with mc1: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>📉 Çan Eğrisi</b><br><span style='font-size:20px; color:#e61532;'>{sum(secilen)}</span></div>", unsafe_allow_html=True)
                                 with mc2: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>↔️ Kapsam</b><br><span style='font-size:20px; color:#e61532;'>{secilen[-1] - secilen[0]}</span></div>", unsafe_allow_html=True)
                                 with mc3: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🛡️ Klan Zırhı</b><br><span style='font-size:20px; color:#5a9bd5;'>{klan_degeri} Farklı</span></div>", unsafe_allow_html=True)
-                                with mc4: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🤖 Düşman Testi</b><br><span class='highlight-yellow' style='font-size:16px;'>0 (Temiz)</span></div>", unsafe_allow_html=True)
+                                with mc4: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🤖 Düşman Testi</b><br><span style='font-size:18px; font-weight:bold; color:{renk};'>{dusman_etiketi}</span></div>", unsafe_allow_html=True)
                                 
                                 if i < gosterilecek_adet - 1:
                                     st.markdown("<hr style='border: 1px dashed #cbd5e1; margin: 30px 0;'>", unsafe_allow_html=True)
+                                
                         else:
-                            st.error("🚨 PARADOKS TESPİT EDİLDİ: Bu kadar katı kuralı aynı anda sağlayan hiçbir sayı evrende bulunamadı. Kurallardan birini esnetin.")
-
-        # --- 4 YENİ SEKME (CSS İLE SİMSİYAH VE KALIN YAPILANDIRILMIŞ) ---
-        st.markdown("<br><hr style='border: 3px solid #e2e8f0; margin-bottom: 25px;'>", unsafe_allow_html=True)
-        
-        st.markdown("""
-        <style>
-        button[data-baseweb="tab"]:nth-child(3) p, button[data-baseweb="tab"]:nth-child(4) p {
-            font-weight: 900 !important;
-            font-size: 16px !important;
-            color: #000000 !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        tab_tarih, tab_detayli, tab_simulasyon, tab_sorgu = st.tabs([
-            "📈 TARİHSEL BİLANÇO (GENEL İSTATİSTİK)", 
-            "🧠 DETAYLI YAPAY ZEKA ANALİZİ", 
-            "🎯 SONRAKİ ÇEKİLİŞ SİMÜLASYONU",
-            "🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU"
-        ])
-
-        with tab_tarih:
-            last_d = valid_draws[0]
-            st.markdown("#### 🎯 SON ÇEKİLİŞİN MR'I (Röntgen)")
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(f"<div class='metric-card' style='padding:10px;'><b>Frekans Şablonu</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_f_pattern(last_d)}</span></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='metric-card' style='padding:10px;'><b>Tek/Çift Dengesi</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_tc(last_d)}</span></div>", unsafe_allow_html=True)
-            c3.markdown(f"<div class='metric-card' style='padding:10px;'><b>Ardışık Durumu</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_ard(last_d)}</span></div>", unsafe_allow_html=True)
-            
-            c4, c5, c6 = st.columns(3)
-            c4.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Kök Eşleşmesi</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_k(last_d)}</span></div>", unsafe_allow_html=True)
-            c5.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Bölge Dağılımı (Alt-Orta-Üst)</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_bolge_pattern(last_d)}</span></div>", unsafe_allow_html=True)
-            
-            devir_bilgisi = get_dev(valid_draws[1], last_d) if len(valid_draws) > 1 else "YOK"
-            c6.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Devir (Geçen Haftadan)</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{devir_bilgisi}</span></div>", unsafe_allow_html=True)
-            
-            st.markdown("<br>#### 📊 OYUNUN GENEL KARAKTERİ (Tüm Zamanlar)", unsafe_allow_html=True)
-            
-            hist_f = Counter()
-            hist_tc = Counter()
-            hist_ard = Counter()
-            hist_kok = Counter()
-            hist_dev = Counter()
-            hist_bolge = Counter()
-            
-            for i in range(len(valid_draws)):
-                d = valid_draws[i]
-                hist_f[get_f_pattern(d)] += 1
-                hist_tc[get_tc(d)] += 1
-                hist_ard[get_ard(d)] += 1
-                hist_kok[get_k(d)] += 1
-                hist_bolge[get_bolge_pattern(d)] += 1
-                if i < len(valid_draws) - 1:
-                    hist_dev[get_dev(valid_draws[i+1], valid_draws[i])] += 1
-                    
-            tot = len(valid_draws)
-            tot_dev = tot - 1 if tot > 1 else 1
-            
-            def render_bar(label, count, total_val):
-                pct = (count / total_val) * 100
-                return f'''
-                <div style="margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                        <span style="font-weight: 800; color: #334155; font-size: 13px;">{label}</span>
-                        <span style="font-weight: 900; color: #e61532; font-size: 13px;">%{pct:.1f} <span style="color:#94a3b8; font-size:11px;">({count} Kez)</span></span>
-                    </div>
-                    <div style="width: 100%; background-color: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
-                        <div style="width: {pct}%; background-color: #e61532; height: 100%;"></div>
-                    </div>
-                </div>
-                '''
-                
-            col_bar1, col_bar2 = st.columns(2)
-            with col_bar1:
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🔥 En Çok Gelen Frekanslar (İlk 5)</h5>", unsafe_allow_html=True)
-                for k, v in hist_f.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎲 Ardışık Sayı Durumu</h5>", unsafe_allow_html=True)
-                for k, v in hist_ard.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>♻️ Geçen Haftadan Devir (Kilit Sayı)</h5>", unsafe_allow_html=True)
-                for k, v in hist_dev.most_common(): st.markdown(render_bar(k, v, tot_dev), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            with col_bar2:
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>⚖️ Tek/Çift Dağılımı</h5>", unsafe_allow_html=True)
-                for k, v in hist_tc.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🧩 Kök Eşleşmesi (Son Rakam)</h5>", unsafe_allow_html=True)
-                for k, v in hist_kok.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎯 Bölge Dağılımı (Alt-Orta-Üst)</h5>", unsafe_allow_html=True)
-                for k, v in hist_bolge.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-        with tab_detayli:
-            st.markdown("### 🧠 İLERİ DÜZEY İSTİHBARAT (RADAR SİSTEMİ)")
-            
-            col_rad1, col_rad2 = st.columns(2)
-            with col_rad1:
-                st.markdown("#### 🔥 ALEV ALANLAR (Momentum İvmesi)")
-                if momentum_sayilari:
-                    alevler_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
-                    for k, v in sorted(momentum_sayilari.items(), key=lambda item: item[1], reverse=True):
-                        alevler_html += f"<div style='background-color:#fffbea; border:1.5px solid #000000; border-radius:6px; padding:8px 10px; text-align:center; min-width:85px;'><div style='color:#b45309; font-size:13px; font-weight:900; margin-bottom:2px;'>Sayı {k}</div><div style='font-size:10px; color:#64748b; font-weight:bold; margin-bottom:3px;'>Son 10 Çekilişte</div><div style='font-size:16px; color:#e61532; font-weight:900;'>{v} Kez</div></div>"
-                    alevler_html += "</div>"
-                    st.markdown(alevler_html, unsafe_allow_html=True)
-                else: st.info("Son 10 çekilişte çıldıran sayı yok.")
-                
-            with col_rad2:
-                st.markdown("#### 💤 UYUYAN DEVLER (Kuluçka)")
-                if uyuyan_devler:
-                    uyuyan_html = "<div style='display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
-                    for k, v in sorted(uyuyan_devler.items(), key=lambda item: item[1], reverse=True):
-                        uyuyan_html += f"<div style='background-color:#f0f9ff; border:1px solid #bae6fd; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;'><strong style='color:#0369a1; font-size:13px;'>Sayı {k}</strong><span style='font-size:12px; color:#64748b; font-weight:bold;'>{v} Çekiliştir Yok</span></div>"
-                    uyuyan_html += "</div>"
-                    st.markdown(uyuyan_html, unsafe_allow_html=True)
-                else: st.info("Uyuyan dev bulunmuyor.")
-
-            st.markdown("---")
-            st.markdown("<h4 style='color:#e61532;'>🧬 ÇAPRAZ GEÇİŞ ANALİZİ (MARKOV MATRİSİ)</h4>", unsafe_allow_html=True)
-            
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0ea5e9; padding: 12px 15px; margin-bottom: 15px; border-radius: 4px; color: #334155; font-size: 0.90rem; line-height: 1.5;'>
-                Frekansları seçin; <b>Yapay Zeka motoru</b> sizin için bu frekansın tarihte kaç kez yaşandığını, bu frekans geldiğinde <b>tek/çift</b> yüzdesini, <b>kök eşleşme</b>, önceki haftadan <b>devir</b> yüzdelerini, <b>ardışık ve alt/orta/üst bölge</b> yüzdelerini sizin için hesaplasın.
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
-                <div style="flex: 1; background-color: #fff5f5; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #c53030; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔥 SICAK (≥{hot_limit}): {len(hot_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #742a2a; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(hot_nums)))}</p>
-                </div>
-                <div style="flex: 1; background-color: #ebf8ff; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #2b6cb0; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔵 ORTA ({cold_limit+1}-{hot_limit-1}): {len(medium_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #2c5282; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(medium_nums)))}</p>
-                </div>
-                <div style="flex: 1; background-color: #fefbeb; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #b7791f; font-size: 0.90rem; display: block; margin-bottom: 5px;">❄️ SOĞUK (≤{cold_limit}): {len(cold_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #744210; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(cold_nums)))}</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            last_s = sum(1 for x in valid_draws[0] if x in hot_nums)
-            last_o = sum(1 for x in valid_draws[0] if x in medium_nums)
-            last_c = sum(1 for x in valid_draws[0] if x in cold_nums)
-            
-            st.markdown("""
-            <div style='border: 3px solid #000000; border-radius: 10px; padding: 20px; background-color: #f8fafc; margin-bottom: 20px; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.1);'>
-                <h4 style='text-align: center; color: #0f172a; font-weight: 900; margin-top: 0; margin-bottom: 20px; letter-spacing: 0.5px;'>🎯 HEDEF FREKANS KOMBİNASYONUNU SEÇİN</h4>
-            """, unsafe_allow_html=True)
-            
-            cc1, cc2, cc3 = st.columns(3)
-            with cc1:
-                st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
-                target_s = st.number_input("Sıcak (S)", 0, 6, last_s, key="ts_m_sayisal", label_visibility="collapsed")
-            with cc2:
-                st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
-                target_o = st.number_input("Orta (O)", 0, 6, last_o, key="to_m_sayisal", label_visibility="collapsed")
-            with cc3:
-                st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
-                target_c = st.number_input("Soğuk (C)", 0, 6, last_c, key="tc_m_sayisal", label_visibility="collapsed")
-                
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if target_s + target_o + target_c != 6:
-                st.warning("⚠️ Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
-            else:
-                target_freq = f"{target_s}S - {target_o}O - {target_c}C"
-                t_draws = []
-                for i in range(1, len(valid_draws)):
-                    if get_f_pattern(valid_draws[i]) == target_freq:
-                        next_d = valid_draws[i-1]
-                        t_draws.append({
-                            'tc': get_tc(next_d), 'ard': get_ard(next_d), 'kok': get_k(next_d),
-                            'dev': get_dev(valid_draws[i], next_d), 'bolge': get_bolge_pattern(next_d)
-                        })
-
-                if len(t_draws) > 0:
-                    st.info(f"**Seçilen Şablon:** {target_freq} | Tarihte bu şablondan sonra **{len(t_draws)}** kez çekiliş yapılmış:")
-                    tc_c = Counter([x['tc'] for x in t_draws])
-                    ard_c = Counter([x['ard'] for x in t_draws])
-                    kok_c = Counter([x['kok'] for x in t_draws])
-                    dev_c = Counter([x['dev'] for x in t_draws])
-                    bolge_c = Counter([x['bolge'] for x in t_draws])
-                    
-                    def format_pct(counter):
-                        total = sum(counter.values())
-                        return "\n".join([f"- {k}: %{round((v/total)*100, 2)}" for k, v in counter.most_common()])
-                    
-                    copy_text = f"🎯 ÇAPRAZ ANALİZ ÇIKTISI (BAZ FREKANS: {target_freq} - {len(t_draws)} Kez Yaşandı)\n\n--- 1. TEK/ÇİFT REFLEKSİ ---\n{format_pct(tc_c)}\n\n--- 2. ARDIŞIK REFLEKSİ ---\n{format_pct(ard_c)}\n\n--- 3. KÖK EŞLEŞMESİ REFLEKSİ ---\n{format_pct(kok_c)}\n\n--- 4. DEVİR REFLEKSİ ---\n{format_pct(dev_c)}\n\n--- 5. BÖLGE REFLEKSİ (Alt-Orta-Üst) ---\n{format_pct(bolge_c)}"
-                    
-                    st.markdown(f'''
-                    <div style="background-color: #ffffff; padding: 20px; border: 2px solid #000000; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                        <pre style="color: #000000; font-weight: 800; font-size: 15px; font-family: Consolas, monospace; background: transparent; border: none; margin: 0; padding: 0;">{copy_text}</pre>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                else:
-                    st.warning(f"Tarihte daha önce {target_freq} şablonu yaşanıp ardından çekiliş yapılmamış.")
-
-        with tab_simulasyon:
-            st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🎯 GELECEK HAFTA PROJEKSİYONU (YAPAY ZEKA TAHMİNİ)</h3>", unsafe_allow_html=True)
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #0ea5e9; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.15rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
-                Bu motor, son çekilişin 6 farklı DNA özelliğini alır, oyunun tüm geçmişini tarar ve tarihte bu özelliklerden sonra en yüksek ihtimalle nelerin geldiğini hesaplar.
-            </div>
-            """, unsafe_allow_html=True)
-            
-            history_sim = []
-            for i in range(len(valid_draws)):
-                d = valid_draws[i]
-                dev_durum = "Bilinmiyor"
-                if i + 1 < len(valid_draws):
-                    dev_durum = get_dev(valid_draws[i+1], d)
-                
-                history_sim.append({
-                    'freq': get_f_pattern(d),
-                    'oe': get_tc(d),
-                    'cons': get_ard(d),
-                    'root': get_k(d),
-                    'bolge': get_bolge_pattern(d),
-                    'devir': dev_durum
-                })
-            
-            last_sim = history_sim[0] 
-            
-            def render_transition(prop_key, target_val, title):
-                next_states = []
-                for i in range(1, len(history_sim)):
-                    if history_sim[i][prop_key] == target_val:
-                        next_states.append(history_sim[i-1][prop_key])
-                
-                html_str = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); height:100%;'>"
-                html_str += f"<h5 style='color:#0f172a; font-weight:900; font-size:15px; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
-                html_str += f"<p style='font-size:12px; color:#64748b; margin-bottom:10px;'>Son Çekiliş: <b style='color:#e61532;'>{target_val}</b></p>"
-                
-                if not next_states:
-                    html_str += "<span style='color:#64748b; font-size:13px;'>Tarihte örnek bulunamadı.</span></div>"
-                    return html_str
-                
-                c = Counter(next_states)
-                total = len(next_states)
-                html_str += "<ul style='margin-bottom:0; padding-left:20px; font-size:14px;'>"
-                for k, v in c.most_common(3): 
-                    pct = (v/total)*100
-                    html_str += f"<li style='margin-bottom:5px;'><b>%{pct:.1f}</b> ihtimalle <span style='color:#e61532; font-weight:bold;'>{k}</span></li>"
-                html_str += "</ul></div>"
-                return html_str
-
-            st.markdown(f"<h5 style='color:#e61532; margin-bottom:15px;'>🔍 SON ÇEKİLİŞ ({valid_draws[0]}) BAZ ALINARAK YAPILAN MARKOV HESAPLAMALARI:</h5>", unsafe_allow_html=True)
-            
-            sc1, sc2, sc3 = st.columns(3)
-            with sc1:
-                st.markdown(render_transition('freq', last_sim['freq'], "1. Frekans Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('devir', last_sim['devir'], "4. Devir Radarı"), unsafe_allow_html=True)
-            with sc2:
-                st.markdown(render_transition('bolge', last_sim['bolge'], "2. Bölge Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('cons', last_sim['cons'], "5. Ardışık Radarı"), unsafe_allow_html=True)
-            with sc3:
-                st.markdown(render_transition('oe', last_sim['oe'], "3. Tek/Çift Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('root', last_sim['root'], "6. Kök Eşleşme Radarı"), unsafe_allow_html=True)
-                
-            st.markdown("<hr style='border: 2px dashed #cbd5e1; margin: 25px 0;'>", unsafe_allow_html=True)
-            st.markdown("#### 🚨 KRİTİK İSTİHBARAT: 'SAYI KESİLME' ALGORİTMASI")
-            
-            streak_3_count = 0
-            streak_4_count = 0
-            for num in range(1, 91):
-                for i in range(3, len(valid_draws)):
-                    if num in valid_draws[i] and num in valid_draws[i-1] and num in valid_draws[i-2]:
-                        streak_3_count += 1
-                        if num in valid_draws[i-3]:
-                            streak_4_count += 1
+                            st.error("🚨 PARADOKS TESPİT EDİLDİ: Seçtiğiniz kurallar havuzda hiçbir sayı bırakmadı!")
+                            en_cok_elenen = max(hata_kodlari, key=hata_kodlari.get)
                             
-            if streak_3_count > 0:
-                perc_devam = (streak_4_count / streak_3_count) * 100
-                perc_kesilme = 100 - perc_devam
-                st.markdown(f"""
-                <div style='background-color: #fff1f2; border: 2px solid #ef4444; padding: 15px; border-radius: 8px; color: #7f1d1d;'>
-                    Çılgın Sayısal Loto tarihinde herhangi bir sayının <b>3 hafta ÜST ÜSTE çıkma durumu tam {streak_3_count} kez</b> yaşanmıştır.<br><br>
-                    Algoritmanın tespitine göre, 3 hafta üst üste çıkan bir sayının <b>4. HAFTA KESİN OLARAK KESİLME (GELMEME) ihtimali: <span style='font-size:22px; font-weight:900;'>%{perc_kesilme:.2f}</span></b>'dir.<br>
-                    <span style='font-size:14px; color:#991b1b;'><i>(Kupon yaparken, son 3 haftadır çıkan bir sayı varsa onu <b>%{perc_kesilme:.2f} matematiksel güvence ile</b> eleyebilirsiniz.)</i></span>
+                            sebep_metni = ""
+                            if en_cok_elenen == "frekans_havuzu": sebep_metni = "Sıcak/Orta/Soğuk havuzlarındaki güncel sayılar, hedefinizi beslemeye yetmiyor."
+                            elif en_cok_elenen == "tek_cift": sebep_metni = "Havuzdaki sayıların güncel matematiği, istediğiniz Tek/Çift oranını vermiyor."
+                            elif en_cok_elenen == "bolge": sebep_metni = "İstediğiniz Bölge dağılımı; Frekans sayılarının yığıldığı bölgelerle tamamen çelişiyor."
+                            elif en_cok_elenen == "devir": sebep_metni = "Devir kuralınız aktif frekans havuzlarında yer almıyor."
+                            elif en_cok_elenen == "can_kapsam": sebep_metni = "Çan Eğrisi veya Kapsam sınırlarınız çok dar. Sayılar bu aralığa sığamıyor."
+                            elif en_cok_elenen == "kok": sebep_metni = "Kök eşleşmesi kuralınız çok katı."
+                            elif en_cok_elenen == "ardisik": sebep_metni = "Sistem çift/üçlü ardışıkları reddettiği için elinizdeki havuz daraldı."
+                                
+                            st.warning(f"""
+                            **🔍 GERÇEK X-RAY TEŞHİS RAPORU:**
+                            Motor {attempts} defa Kuantum taraması yaptı ancak sonuç alamadı. 
+                            Sistemi kilitleyen ASIL Kural: **{en_cok_elenen.upper()} FİLTRESİ**.
+                            
+                            **Kilitlenme Sebebi:** {sebep_metni}
+                            """)
+
+        # --- 4 YENİ SEKME (GİZLEME KİLİDİ EKLENDİ VE HİZALANDI) ---
+        if not (sayisal_basla_btn or sayisal_ai_basla_btn):
+            st.markdown("<br><hr style='border: 3px solid #e2e8f0; margin-bottom: 25px;'>", unsafe_allow_html=True)
+            
+            st.markdown("""
+            <style>
+            button[data-baseweb="tab"]:nth-child(3) p, button[data-baseweb="tab"]:nth-child(4) p {
+                font-weight: 900 !important;
+                font-size: 16px !important;
+                color: #000000 !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
+            tab_tarih, tab_detayli, tab_simulasyon, tab_sorgu = st.tabs([
+                "📈 TARİHSEL BİLANÇO (GENEL İSTATİSTİK)", 
+                "🧠 DETAYLI YAPAY ZEKA ANALİZİ", 
+                "🎯 SONRAKİ ÇEKİLİŞ SİMÜLASYONU",
+                "🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU"
+            ])
+
+            with tab_tarih:
+                last_d = valid_draws[0]
+                st.markdown("#### 🎯 SON ÇEKİLİŞİN MR'I (Röntgen)")
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f"<div class='metric-card' style='padding:10px;'><b>Frekans Şablonu</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_f_pattern(last_d)}</span></div>", unsafe_allow_html=True)
+                c2.markdown(f"<div class='metric-card' style='padding:10px;'><b>Tek/Çift Dengesi</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_tc(last_d)}</span></div>", unsafe_allow_html=True)
+                c3.markdown(f"<div class='metric-card' style='padding:10px;'><b>Ardışık Durumu</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_ard(last_d)}</span></div>", unsafe_allow_html=True)
+                
+                c4, c5, c6 = st.columns(3)
+                c4.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Kök Eşleşmesi</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_k(last_d)}</span></div>", unsafe_allow_html=True)
+                c5.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Bölge Dağılımı (Alt-Orta-Üst)</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{get_bolge_pattern(last_d)}</span></div>", unsafe_allow_html=True)
+                
+                devir_bilgisi = get_dev(valid_draws[1], last_d) if len(valid_draws) > 1 else "YOK"
+                c6.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Devir (Geçen Haftadan)</b><br><span style='color:#e61532; font-weight:900; font-size:16px;'>{devir_bilgisi}</span></div>", unsafe_allow_html=True)
+                
+                st.markdown("<br>#### 📊 OYUNUN GENEL KARAKTERİ (Tüm Zamanlar)", unsafe_allow_html=True)
+                
+                hist_f = Counter()
+                hist_tc = Counter()
+                hist_ard = Counter()
+                hist_kok = Counter()
+                hist_dev = Counter()
+                hist_bolge = Counter()
+                
+                for i in range(len(valid_draws)):
+                    d = valid_draws[i]
+                    hist_f[get_f_pattern(d)] += 1
+                    hist_tc[get_tc(d)] += 1
+                    hist_ard[get_ard(d)] += 1
+                    hist_kok[get_k(d)] += 1
+                    hist_bolge[get_bolge_pattern(d)] += 1
+                    if i < len(valid_draws) - 1:
+                        hist_dev[get_dev(valid_draws[i+1], valid_draws[i])] += 1
+                        
+                tot = len(valid_draws)
+                tot_dev = tot - 1 if tot > 1 else 1
+                
+                def render_bar(label, count, total_val):
+                    pct = (count / total_val) * 100
+                    return f'''
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span style="font-weight: 800; color: #334155; font-size: 13px;">{label}</span>
+                            <span style="font-weight: 900; color: #e61532; font-size: 13px;">%{pct:.1f} <span style="color:#94a3b8; font-size:11px;">({count} Kez)</span></span>
+                        </div>
+                        <div style="width: 100%; background-color: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
+                            <div style="width: {pct}%; background-color: #e61532; height: 100%;"></div>
+                        </div>
+                    </div>
+                    '''
+                    
+                col_bar1, col_bar2 = st.columns(2)
+                with col_bar1:
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🔥 En Çok Gelen Frekanslar (İlk 5)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_f.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎲 Ardışık Sayı Durumu</h5>", unsafe_allow_html=True)
+                    for k, v in hist_ard.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>♻️ Geçen Haftadan Devir (Kilit Sayı)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_dev.most_common(): st.markdown(render_bar(k, v, tot_dev), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with col_bar2:
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>⚖️ Tek/Çift Dağılımı</h5>", unsafe_allow_html=True)
+                    for k, v in hist_tc.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🧩 Kök Eşleşmesi (Son Rakam)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_kok.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎯 Bölge Dağılımı (Alt-Orta-Üst)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_bolge.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            with tab_detayli:
+                st.markdown("### 🧠 İLERİ DÜZEY İSTİHBARAT (RADAR SİSTEMİ)")
+                
+                col_rad1, col_rad2 = st.columns(2)
+                with col_rad1:
+                    st.markdown("#### 🔥 ALEV ALANLAR (Momentum İvmesi)")
+                    if momentum_sayilari:
+                        alevler_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
+                        for k, v in sorted(momentum_sayilari.items(), key=lambda item: item[1], reverse=True):
+                            alevler_html += f"<div style='background-color:#fffbea; border:1.5px solid #000000; border-radius:6px; padding:8px 10px; text-align:center; min-width:85px;'><div style='color:#b45309; font-size:13px; font-weight:900; margin-bottom:2px;'>Sayı {k}</div><div style='font-size:10px; color:#64748b; font-weight:bold; margin-bottom:3px;'>Son 10 Çekilişte</div><div style='font-size:16px; color:#e61532; font-weight:900;'>{v} Kez</div></div>"
+                        alevler_html += "</div>"
+                        st.markdown(alevler_html, unsafe_allow_html=True)
+                    else: st.info("Son 10 çekilişte çıldıran sayı yok.")
+                    
+                with col_rad2:
+                    st.markdown("#### 💤 UYUYAN DEVLER (Kuluçka)")
+                    if uyuyan_devler:
+                        uyuyan_html = "<div style='display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
+                        for k, v in sorted(uyuyan_devler.items(), key=lambda item: item[1], reverse=True):
+                            uyuyan_html += f"<div style='background-color:#f0f9ff; border:1px solid #bae6fd; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;'><strong style='color:#0369a1; font-size:13px;'>Sayı {k}</strong><span style='font-size:12px; color:#64748b; font-weight:bold;'>{v} Çekiliştir Yok</span></div>"
+                        uyuyan_html += "</div>"
+                        st.markdown(uyuyan_html, unsafe_allow_html=True)
+                    else: st.info("Uyuyan dev bulunmuyor.")
+
+                st.markdown("---")
+                st.markdown("<h4 style='color:#e61532;'>🧬 ÇAPRAZ GEÇİŞ ANALİZİ (MARKOV MATRİSİ)</h4>", unsafe_allow_html=True)
+                
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0ea5e9; padding: 12px 15px; margin-bottom: 15px; border-radius: 4px; color: #334155; font-size: 0.90rem; line-height: 1.5;'>
+                    Frekansları seçin; <b>Yapay Zeka motoru</b> sizin için bu frekansın tarihte kaç kez yaşandığını, bu frekans geldiğinde <b>tek/çift</b> yüzdesini, <b>kök eşleşme</b>, önceki haftadan <b>devir</b> yüzdelerini, <b>ardışık ve alt/orta/üst bölge</b> yüzdelerini sizin için hesaplasın.
                 </div>
                 """, unsafe_allow_html=True)
-            else:
-                st.info("Çılgın Sayısal Loto tarihinde henüz hiçbir sayı 3 hafta üst üste çıkmamıştır.")
-
-        with tab_sorgu:
-            st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU</h3>", unsafe_allow_html=True)
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #8b5cf6; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.10rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
-                Makinenin sinir uçlarına bağlanın. Veritabanındaki en popüler şablonları inceleyin ve kendi belirlediğiniz frekans senaryosunun ardından yaşanacakları simüle edin.
-            </div>
-            """, unsafe_allow_html=True)
-
-            all_freqs = [get_f_pattern(d) for d in valid_draws]
-            freq_counts = Counter(all_freqs)
-            
-            st.markdown("#### 📊 VERİTABANINDAKİ EN POPÜLER FREKANS ŞABLONLARI")
-            pop_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-bottom:30px;'>"
-            for f, c in freq_counts.most_common(5):
-                pop_html += f"<div style='background-color:#ffffff; border:2px solid #cbd5e1; padding:10px 15px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05); text-align:center;'><b>{f}</b><br><span style='color:#e61532; font-weight:900; font-size:14px;'>{c} Kez Yaşandı</span></div>"
-            pop_html += "</div>"
-            st.markdown(pop_html, unsafe_allow_html=True)
-
-            st.markdown("#### 🔍 HEDEF FREKANSI BELİRLEYİN")
-            cq1, cq2, cq3 = st.columns(3)
-            with cq1:
-                st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
-                q_s = st.number_input("Sıcak", 0, 6, 2, key="sq_s", label_visibility="collapsed")
-            with cq2:
-                st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
-                q_o = st.number_input("Orta", 0, 6, 3, key="sq_o", label_visibility="collapsed")
-            with cq3:
-                st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
-                q_c = st.number_input("Soğuk", 0, 6, 1, key="sq_c", label_visibility="collapsed")
                 
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            if st.button("🚀 DİNAMİK İSTİHBARATI GETİR", type="primary", use_container_width=True, key="sq_btn"):
-                if q_s + q_o + q_c != 6:
-                    st.error("⚠️ HATA: Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
+                st.markdown(f"""
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
+                    <div style="flex: 1; background-color: #fff5f5; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #c53030; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔥 SICAK (≥{hot_limit}): {len(hot_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #742a2a; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(hot_nums)))}</p>
+                    </div>
+                    <div style="flex: 1; background-color: #ebf8ff; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #2b6cb0; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔵 ORTA ({cold_limit+1}-{hot_limit-1}): {len(medium_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #2c5282; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(medium_nums)))}</p>
+                    </div>
+                    <div style="flex: 1; background-color: #fefbeb; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #b7791f; font-size: 0.90rem; display: block; margin-bottom: 5px;">❄️ SOĞUK (≤{cold_limit}): {len(cold_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #744210; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(cold_nums)))}</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                last_s = sum(1 for x in valid_draws[0] if x in hot_nums)
+                last_o = sum(1 for x in valid_draws[0] if x in medium_nums)
+                last_c = sum(1 for x in valid_draws[0] if x in cold_nums)
+                
+                st.markdown("""
+                <div style='border: 3px solid #000000; border-radius: 10px; padding: 20px; background-color: #f8fafc; margin-bottom: 20px; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.1);'>
+                    <h4 style='text-align: center; color: #0f172a; font-weight: 900; margin-top: 0; margin-bottom: 20px; letter-spacing: 0.5px;'>🎯 HEDEF FREKANS KOMBİNASYONUNU SEÇİN</h4>
+                """, unsafe_allow_html=True)
+                
+                cc1, cc2, cc3 = st.columns(3)
+                with cc1:
+                    st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
+                    target_s = st.number_input("Sıcak (S)", 0, 6, last_s, key="ts_m_sayisal", label_visibility="collapsed")
+                with cc2:
+                    st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
+                    target_o = st.number_input("Orta (O)", 0, 6, last_o, key="to_m_sayisal", label_visibility="collapsed")
+                with cc3:
+                    st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
+                    target_c = st.number_input("Soğuk (C)", 0, 6, last_c, key="tc_m_sayisal", label_visibility="collapsed")
+                    
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                if target_s + target_o + target_c != 6:
+                    st.warning("⚠️ Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
                 else:
-                    target_f_str = f"{q_s}S - {q_o}O - {q_c}C"
-                    q_results = {'oe': [], 'cons': [], 'root': [], 'bolge': [], 'devir': []}
-                    match_count = 0
-                    
+                    target_freq = f"{target_s}S - {target_o}O - {target_c}C"
+                    t_draws = []
                     for i in range(1, len(valid_draws)):
-                        if get_f_pattern(valid_draws[i]) == target_f_str:
-                            match_count += 1
-                            trigger_draw = valid_draws[i]
-                            next_draw = valid_draws[i-1]
-                            
-                            q_results['oe'].append(get_tc(next_draw))
-                            q_results['cons'].append(get_ard(next_draw))
-                            q_results['root'].append(get_k(next_draw))
-                            q_results['bolge'].append(get_bolge_pattern(next_draw))
-                            q_results['devir'].append(get_dev(trigger_draw, next_draw))
-                    
-                    if match_count == 0:
-                        st.warning(f"Veritabanında '{target_f_str}' frekansının gelip de ardından çekiliş yapılan bir kayıt bulunamadı.")
-                    else:
-                        st.success(f"✅ HEDEF KİLİTLENDİ: Tarihte '{target_f_str}' şablonundan SONRAKİ HAFTA tam {match_count} kez çekiliş yapılmıştır. Makinenin gösterdiği refleksler aşağıdadır:")
+                        if get_f_pattern(valid_draws[i]) == target_freq:
+                            next_d = valid_draws[i-1]
+                            t_draws.append({
+                                'tc': get_tc(next_d), 'ard': get_ard(next_d), 'kok': get_k(next_d),
+                                'dev': get_dev(valid_draws[i], next_d), 'bolge': get_bolge_pattern(next_d)
+                            })
+
+                    if len(t_draws) > 0:
+                        st.info(f"**Seçilen Şablon:** {target_freq} | Tarihte bu şablondan sonra **{len(t_draws)}** kez çekiliş yapılmış:")
+                        tc_c = Counter([x['tc'] for x in t_draws])
+                        ard_c = Counter([x['ard'] for x in t_draws])
+                        kok_c = Counter([x['kok'] for x in t_draws])
+                        dev_c = Counter([x['dev'] for x in t_draws])
+                        bolge_c = Counter([x['bolge'] for x in t_draws])
                         
-                        def print_q_stats(data_list, title):
-                            c = Counter(data_list)
-                            total = len(data_list)
-                            html = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; margin-bottom:15px; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>"
-                            html += f"<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
-                            for k, v in c.most_common():
-                                perc = (v / total) * 100
-                                html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px dashed #f1f5f9; padding-bottom:4px;'><span style='font-weight:bold; color:#334155; font-size:14px;'>{k}</span> <span style='color:#e61532; font-weight:900; font-size:15px;'>%{perc:.2f}</span></div>"
-                            html += "</div>"
-                            return html
+                        def format_pct(counter):
+                            total = sum(counter.values())
+                            return "\n".join([f"- {k}: %{round((v/total)*100, 2)}" for k, v in counter.most_common()])
+                        
+                        copy_text = f"🎯 ÇAPRAZ ANALİZ ÇIKTISI (BAZ FREKANS: {target_freq} - {len(t_draws)} Kez Yaşandı)\n\n--- 1. TEK/ÇİFT REFLEKSİ ---\n{format_pct(tc_c)}\n\n--- 2. ARDIŞIK REFLEKSİ ---\n{format_pct(ard_c)}\n\n--- 3. KÖK EŞLEŞMESİ REFLEKSİ ---\n{format_pct(kok_c)}\n\n--- 4. DEVİR REFLEKSİ ---\n{format_pct(dev_c)}\n\n--- 5. BÖLGE REFLEKSİ (Alt-Orta-Üst) ---\n{format_pct(bolge_c)}"
+                        
+                        st.markdown(f'''
+                        <div style="background-color: #ffffff; padding: 20px; border: 2px solid #000000; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                            <pre style="color: #000000; font-weight: 800; font-size: 15px; font-family: Consolas, monospace; background: transparent; border: none; margin: 0; padding: 0;">{copy_text}</pre>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    else:
+                        st.warning(f"Tarihte daha önce {target_freq} şablonu yaşanıp ardından çekiliş yapılmamış.")
 
-                        qc1, qc2 = st.columns(2)
-                        with qc1:
-                            st.markdown(print_q_stats(q_results['oe'], "1. TEK/ÇİFT REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['bolge'], "3. BÖLGE (ALT-ORTA-ÜST) REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['root'], "5. KÖK EŞLEŞME REFLEKSİ"), unsafe_allow_html=True)
-                        with qc2:
-                            st.markdown(print_q_stats(q_results['cons'], "2. ARDIŞIK SAYI REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['devir'], "4. DEVİR REFLEKSİ"), unsafe_allow_html=True)
+            with tab_simulasyon:
+                st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🎯 GELECEK HAFTA PROJEKSİYONU (YAPAY ZEKA TAHMİNİ)</h3>", unsafe_allow_html=True)
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #0ea5e9; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.15rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                    Bu motor, son çekilişin 6 farklı DNA özelliğini alır, oyunun tüm geçmişini tarar ve tarihte bu özelliklerden sonra en yüksek ihtimalle nelerin geldiğini hesaplar.
+                </div>
+                """, unsafe_allow_html=True)
+                
+                history_sim = []
+                for i in range(len(valid_draws)):
+                    d = valid_draws[i]
+                    dev_durum = "Bilinmiyor"
+                    if i + 1 < len(valid_draws):
+                        dev_durum = get_dev(valid_draws[i+1], d)
+                    
+                    history_sim.append({
+                        'freq': get_f_pattern(d),
+                        'oe': get_tc(d),
+                        'cons': get_ard(d),
+                        'root': get_k(d),
+                        'bolge': get_bolge_pattern(d),
+                        'devir': dev_durum
+                    })
+                
+                last_sim = history_sim[0] 
+                
+                def render_transition(prop_key, target_val, title):
+                    next_states = []
+                    for i in range(1, len(history_sim)):
+                        if history_sim[i][prop_key] == target_val:
+                            next_states.append(history_sim[i-1][prop_key])
+                    
+                    html_str = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); height:100%;'>"
+                    html_str += f"<h5 style='color:#0f172a; font-weight:900; font-size:15px; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
+                    html_str += f"<p style='font-size:12px; color:#64748b; margin-bottom:10px;'>Son Çekiliş: <b style='color:#e61532;'>{target_val}</b></p>"
+                    
+                    if not next_states:
+                        html_str += "<span style='color:#64748b; font-size:13px;'>Tarihte örnek bulunamadı.</span></div>"
+                        return html_str
+                    
+                    c = Counter(next_states)
+                    total = len(next_states)
+                    html_str += "<ul style='margin-bottom:0; padding-left:20px; font-size:14px;'>"
+                    for k, v in c.most_common(3): 
+                        pct = (v/total)*100
+                        html_str += f"<li style='margin-bottom:5px;'><b>%{pct:.1f}</b> ihtimalle <span style='color:#e61532; font-weight:bold;'>{k}</span></li>"
+                    html_str += "</ul></div>"
+                    return html_str
+
+                st.markdown(f"<h5 style='color:#e61532; margin-bottom:15px;'>🔍 SON ÇEKİLİŞ ({valid_draws[0]}) BAZ ALINARAK YAPILAN MARKOV HESAPLAMALARI:</h5>", unsafe_allow_html=True)
+                
+                sc1, sc2, sc3 = st.columns(3)
+                with sc1:
+                    st.markdown(render_transition('freq', last_sim['freq'], "1. Frekans Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('devir', last_sim['devir'], "4. Devir Radarı"), unsafe_allow_html=True)
+                with sc2:
+                    st.markdown(render_transition('bolge', last_sim['bolge'], "2. Bölge Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('cons', last_sim['cons'], "5. Ardışık Radarı"), unsafe_allow_html=True)
+                with sc3:
+                    st.markdown(render_transition('oe', last_sim['oe'], "3. Tek/Çift Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('root', last_sim['root'], "6. Kök Eşleşme Radarı"), unsafe_allow_html=True)
+                    
+                st.markdown("<hr style='border: 2px dashed #cbd5e1; margin: 25px 0;'>", unsafe_allow_html=True)
+                st.markdown("#### 🚨 KRİTİK İSTİHBARAT: 'SAYI KESİLME' ALGORİTMASI")
+                
+                streak_3_count = 0
+                streak_4_count = 0
+                for num in range(1, 91):
+                    for i in range(3, len(valid_draws)):
+                        if num in valid_draws[i] and num in valid_draws[i-1] and num in valid_draws[i-2]:
+                            streak_3_count += 1
+                            if num in valid_draws[i-3]:
+                                streak_4_count += 1
+                                
+                if streak_3_count > 0:
+                    perc_devam = (streak_4_count / streak_3_count) * 100
+                    perc_kesilme = 100 - perc_devam
+                    st.markdown(f"""
+                    <div style='background-color: #fff1f2; border: 2px solid #ef4444; padding: 15px; border-radius: 8px; color: #7f1d1d;'>
+                        Çılgın Sayısal Loto tarihinde herhangi bir sayının <b>3 hafta ÜST ÜSTE çıkma durumu tam {streak_3_count} kez</b> yaşanmıştır.<br><br>
+                        Algoritmanın tespitine göre, 3 hafta üst üste çıkan bir sayının <b>4. HAFTA KESİN OLARAK KESİLME (GELMEME) ihtimali: <span style='font-size:22px; font-weight:900;'>%{perc_kesilme:.2f}</span></b>'dir.<br>
+                        <span style='font-size:14px; color:#991b1b;'><i>(Kupon yaparken, son 3 haftadır çıkan bir sayı varsa onu <b>%{perc_kesilme:.2f} matematiksel güvence ile</b> eleyebilirsiniz.)</i></span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("Çılgın Sayısal Loto tarihinde henüz hiçbir sayı 3 hafta üst üste çıkmamıştır.")
+
+            with tab_sorgu:
+                st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU</h3>", unsafe_allow_html=True)
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #8b5cf6; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.10rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                    Makinenin sinir uçlarına bağlanın. Veritabanındaki en popüler şablonları inceleyin ve kendi belirlediğiniz frekans senaryosunun ardından yaşanacakları simüle edin.
+                </div>
+                """, unsafe_allow_html=True)
+
+                all_freqs = [get_f_pattern(d) for d in valid_draws]
+                freq_counts = Counter(all_freqs)
+                
+                st.markdown("#### 📊 VERİTABANINDAKİ EN POPÜLER FREKANS ŞABLONLARI")
+                pop_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-bottom:30px;'>"
+                for f, c in freq_counts.most_common(5):
+                    pop_html += f"<div style='background-color:#ffffff; border:2px solid #cbd5e1; padding:10px 15px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05); text-align:center;'><b>{f}</b><br><span style='color:#e61532; font-weight:900; font-size:14px;'>{c} Kez Yaşandı</span></div>"
+                pop_html += "</div>"
+                st.markdown(pop_html, unsafe_allow_html=True)
+
+                st.markdown("#### 🔍 HEDEF FREKANSI BELİRLEYİN")
+                cq1, cq2, cq3 = st.columns(3)
+                with cq1:
+                    st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
+                    q_s = st.number_input("Sıcak", 0, 6, 2, key="sq_s", label_visibility="collapsed")
+                with cq2:
+                    st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
+                    q_o = st.number_input("Orta", 0, 6, 3, key="sq_o", label_visibility="collapsed")
+                with cq3:
+                    st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
+                    q_c = st.number_input("Soğuk", 0, 6, 1, key="sq_c", label_visibility="collapsed")
+                    
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if st.button("🚀 DİNAMİK İSTİHBARATI GETİR", type="primary", use_container_width=True, key="sq_btn"):
+                    if q_s + q_o + q_c != 6:
+                        st.error("⚠️ HATA: Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
+                    else:
+                        target_f_str = f"{q_s}S - {q_o}O - {q_c}C"
+                        q_results = {'oe': [], 'cons': [], 'root': [], 'bolge': [], 'devir': []}
+                        match_count = 0
+                        
+                        for i in range(1, len(valid_draws)):
+                            if get_f_pattern(valid_draws[i]) == target_f_str:
+                                match_count += 1
+                                trigger_draw = valid_draws[i]
+                                next_draw = valid_draws[i-1]
+                                
+                                q_results['oe'].append(get_tc(next_draw))
+                                q_results['cons'].append(get_ard(next_draw))
+                                q_results['root'].append(get_k(next_draw))
+                                q_results['bolge'].append(get_bolge_pattern(next_draw))
+                                q_results['devir'].append(get_dev(trigger_draw, next_draw))
+                        
+                        if match_count == 0:
+                            st.warning(f"Veritabanında '{target_f_str}' frekansının gelip de ardından çekiliş yapılan bir kayıt bulunamadı.")
+                        else:
+                            st.success(f"✅ HEDEF KİLİTLENDİ: Tarihte '{target_f_str}' şablonundan SONRAKİ HAFTA tam {match_count} kez çekiliş yapılmıştır. Makinenin gösterdiği refleksler aşağıdadır:")
                             
-                        st.info("💡 KAPTAN'A NOT: En yüksek yüzdeler, makinenin bu frekansa verdiği tepkidir. Kolonları kurarken en üst sıradaki şablonları baz al.")
+                            def print_q_stats(data_list, title):
+                                c = Counter(data_list)
+                                total = len(data_list)
+                                html = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; margin-bottom:15px; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>"
+                                html += f"<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
+                                for k, v in c.most_common():
+                                    perc = (v / total) * 100
+                                    html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px dashed #f1f5f9; padding-bottom:4px;'><span style='font-weight:bold; color:#334155; font-size:14px;'>{k}</span> <span style='color:#e61532; font-weight:900; font-size:15px;'>%{perc:.2f}</span></div>"
+                                html += "</div>"
+                                return html
 
-        # --- SAYFA SONU (ALT) ÜRETİM BUTONU ---
-        st.markdown("<br><hr style='border: 2px dashed #cbd5e1; margin-top: 30px; margin-bottom: 20px;'>", unsafe_allow_html=True)
-        
-        if not st.session_state.sayisal_uretim_ekrani_acik:
-            st.markdown("<p style='text-align: center; color: #64748b; font-size:15px; font-weight:bold; margin-bottom:15px;'>Tüm analizleri incelediyseniz motoru ateşleyebilirsiniz 👇</p>", unsafe_allow_html=True)
-            c_alt_sol, c_alt_orta, c_alt_sag = st.columns([1, 2, 1])
-            with c_alt_orta:
-                if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", type="primary", use_container_width=True, key="alt_uretim_btn_sayisal"):
-                    st.session_state.sayisal_uretim_ekrani_acik = True
-                    st.rerun()# 🟢 3. MODÜL: ŞANS TOPU
+                            qc1, qc2 = st.columns(2)
+                            with qc1:
+                                st.markdown(print_q_stats(q_results['oe'], "1. TEK/ÇİFT REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['bolge'], "3. BÖLGE (ALT-ORTA-ÜST) REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['root'], "5. KÖK EŞLEŞME REFLEKSİ"), unsafe_allow_html=True)
+                            with qc2:
+                                st.markdown(print_q_stats(q_results['cons'], "2. ARDIŞIK SAYI REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['devir'], "4. DEVİR REFLEKSİ"), unsafe_allow_html=True)
+                                
+                            st.info("💡 KAPTAN'A NOT: En yüksek yüzdeler, makinenin bu frekansa verdiği tepkidir. Kolonları kurarken en üst sıradaki şablonları baz al.")
+
+                   
+# ==========================================
+# 🟢 3. MODÜL: ŞANS TOPU
 # ==========================================
 elif selected_game == "ŞANS TOPU AI":
     st.markdown("<div class='main-title' style='color:#d80073;'>ŞANS TOPU ANALİZ MERKEZİ</div>", unsafe_allow_html=True)
@@ -1732,7 +2268,7 @@ elif selected_game == "ŞANS TOPU AI":
 <li>📉 <b>Çan Eğrisi ve Kapsam:</b> Seçilen 5 sayının toplamının, oyunun matematiksel kalbi olan <span style="background-color:#fef08a; padding:2px 4px; font-weight:bold; color:black;">86.4</span> eksenine oturup oturmadığını ölçer.</li>
 </ul>
 <div style='background-color:#fdf2f8; padding:12px; border-left:5px solid #db2777; margin-top:15px; border-radius: 4px;'>
-<strong>💡 Strateji Önerisi:</strong> Sol menüden kurallarını (Ardışık, Tek/Çift, Kilit Sayı vb.) katı bir şekilde belirle. Ardından motoru ateşle! Eğer kuralların çok çelişiyorsa makine paradoksa girer ve "Kolon Bulunamadı" der. Kurallarını esneterek, <b>sadece tüm bu devasa filtreleri aşan o yegâne kolona</b> ulaşana kadar denemeye devam et.
+<strong>💡 Strateji Önerisi:</strong> Sol menüden kurallarını (Ardışık, Tek/Çift, Kilit Sayı vb.) katı bir şekilde belirle. Ardından motoru ateşle! Eğer kuralların çok çelişiyorsa makine paradoksa girer. Kurallarını esneterek, <b>sadece tüm bu devasa filtreleri aşan o yegâne kolona</b> ulaşana kadar denemeye devam et.
 </div>
 </div>
 </details>
@@ -1747,10 +2283,9 @@ elif selected_game == "ŞANS TOPU AI":
         all_nums = [num for draw in valid_draws for num in draw]
         counts = Counter(all_nums)
 
-        # ŞANS TOPU SABİT KAPTAN KURALI ENTEGRE EDİLDİ
-        hot_nums = [n for n in range(1, 35) if counts.get(n, 0) >= 26]
+        hot_nums = [n for n in range(1, 35) if counts.get(n, 0) >= 28]
         cold_nums = [n for n in range(1, 35) if counts.get(n, 0) <= 19]
-        medium_nums = [n for n in range(1, 35) if 20 <= counts.get(n, 0) <= 25]
+        medium_nums = [n for n in range(1, 35) if 20 <= counts.get(n, 0) <= 27]
 
         recency = {}
         for n in range(1, 35):
@@ -1786,18 +2321,39 @@ elif selected_game == "ŞANS TOPU AI":
 
         def is_enemy(n1, n2): return (min(n1, n2), max(n1, n2)) in enemies
 
-        st.sidebar.markdown("## ⚙️ ŞANS TOPU FİLTRELERİ")
+        st.sidebar.markdown("## ⚙️ ŞANS TOPU FİLTRELERİ (Hibrit Zırh)")
 
         with st.sidebar.expander("📊 Temel Frekans", expanded=True):
-            col1, col2, col3 = st.columns(3)
-            sicak_hedef = col1.number_input("Sıcak", 0, 5, 2)
-            orta_hedef = col2.number_input("Orta", 0, 5, 2)
-            soguk_hedef = col3.number_input("Soğuk", 0, 5, 1)
+            f_map = {
+                "Dengeli (Önerilen): 2 Sıcak - 2 Orta - 1 Soğuk": (2, 2, 1),
+                "Dengeli: 2 Sıcak - 1 Orta - 2 Soğuk": (2, 1, 2),
+                "Dengeli: 1 Sıcak - 2 Orta - 2 Soğuk": (1, 2, 2),
+                "Sıcak Odaklı: 3 Sıcak - 1 Orta - 1 Soğuk": (3, 1, 1),
+                "Sıcak Odaklı: 3 Sıcak - 2 Orta - 0 Soğuk": (3, 2, 0),
+                "Sıcak Odaklı: 3 Sıcak - 0 Orta - 2 Soğuk": (3, 0, 2),
+                "Orta Odaklı: 1 Sıcak - 3 Orta - 1 Soğuk": (1, 3, 1),
+                "Orta Odaklı: 2 Sıcak - 3 Orta - 0 Soğuk": (2, 3, 0),
+                "Orta Odaklı: 0 Sıcak - 3 Orta - 2 Soğuk": (0, 3, 2),
+                "Soğuk Odaklı: 1 Sıcak - 1 Orta - 3 Soğuk": (1, 1, 3),
+                "Soğuk Odaklı: 2 Sıcak - 0 Orta - 3 Soğuk": (2, 0, 3),
+                "Soğuk Odaklı: 0 Sıcak - 2 Orta - 3 Soğuk": (0, 2, 3),
+                "Ekstrem Sıcak: 4 Sıcak - 1 Orta - 0 Soğuk": (4, 1, 0),
+                "Ekstrem Sıcak: 4 Sıcak - 0 Orta - 1 Soğuk": (4, 0, 1),
+                "Ekstrem Orta: 1 Sıcak - 4 Orta - 0 Soğuk": (1, 4, 0),
+                "Ekstrem Orta: 0 Sıcak - 4 Orta - 1 Soğuk": (0, 4, 1),
+                "Ekstrem Soğuk: 1 Sıcak - 0 Orta - 4 Soğuk": (1, 0, 4),
+                "Ekstrem Soğuk: 0 Sıcak - 1 Orta - 4 Soğuk": (0, 1, 4),
+                "Full Sıcak: 5 Sıcak - 0 Orta - 0 Soğuk": (5, 0, 0),
+                "Full Orta: 0 Sıcak - 5 Orta - 0 Soğuk": (0, 5, 0),
+                "Full Soğuk: 0 Sıcak - 0 Orta - 5 Soğuk": (0, 0, 5)
+            }
+            frekans_secim = st.selectbox("Sıcak - Orta - Soğuk Dağılımı", list(f_map.keys()))
+            sicak_hedef, orta_hedef, soguk_hedef = f_map[frekans_secim]
 
         with st.sidebar.expander("1. Tek/Çift Refleksi", expanded=True):
-            col4, col5 = st.columns(2)
-            tek_hedef = col4.number_input("Tek", 0, 5, 3)
-            cift_hedef = col5.number_input("Çift", 0, 5, 2)
+            tek_hedef = st.slider("Tek Sayı Adedi (Kalanı Çift Olur)", 0, 5, 3)
+            cift_hedef = 5 - tek_hedef
+            st.info(f"Sistem Kilitlendi: {tek_hedef} Tek, {cift_hedef} Çift")
 
         with st.sidebar.expander("2. Ardışık & 3. Kök Refleksi", expanded=True):
             c_strat1, c_strat2 = st.columns(2)
@@ -1823,15 +2379,18 @@ elif selected_game == "ŞANS TOPU AI":
             b2 = col7.number_input("Onlar", 0, 5, 1)
             b3 = col8.number_input("Yirmiler", 0, 5, 2)
             b4 = col9.number_input("Otuzlar", 0, 5, 1)
+            
+            if (b1 + b2 + b3 + b4) != 5:
+                st.error(f"🚨 HATA: Basamak toplamı 5 olmalı! (Şu anki toplam: {b1 + b2 + b3 + b4})")
 
         with st.sidebar.expander("6. Bölge Refleksi (Alt-Üst)", expanded=True):
-            col10, col11 = st.columns(2)
-            alt_hedef = col10.number_input("Alt(1-17)", 0, 5, 2)
-            ust_hedef = col11.number_input("Üst(18-34)", 0, 5, 3)
+            alt_hedef = st.slider("Alt Bölge (1-17) Sayı Adedi", 0, 5, 2)
+            ust_hedef = 5 - alt_hedef
+            st.info(f"Sistem Kilitlendi: {alt_hedef} Alt, {ust_hedef} Üst")
 
         with st.sidebar.expander("🛡️ Ekstra Kısıtlamalar (Çan vb.)", expanded=False):
-            min_toplam, max_toplam = st.slider("Çan Eğrisi (Toplam)", 15, 160, (65, 107))
-            min_kapsam, max_kapsam = st.slider("Kapsam (Mesafe)", 4, 33, (18, 29))
+            min_toplam, max_toplam = st.slider("Çan Eğrisi (Toplam)", 15, 160, (50, 120))
+            min_kapsam, max_kapsam = st.slider("Kapsam (Mesafe)", 4, 33, (10, 33))
             yasak_sayilar_str = st.text_input("Yasaklılar (Virgülle ayırın)", "")
             banko_sayilar_str = st.text_input("Banko Sayılar (Mutlaka Olsun)", "")
 
@@ -1850,11 +2409,11 @@ elif selected_game == "ŞANS TOPU AI":
         def get_dev(prev_col, curr_col): return "VAR" if len(set(prev_col).intersection(set(curr_col))) > 0 else "YOK"
         
         def get_basamak_pattern(col):
-            b1 = sum(1 for x in col if x <= 9)
-            b2 = sum(1 for x in col if 10 <= x <= 19)
-            b3 = sum(1 for x in col if 20 <= x <= 29)
-            b4 = sum(1 for x in col if x >= 30)
-            return f"{b1}B - {b2}O - {b3}Y - {b4}Ot"
+            _b1 = sum(1 for x in col if x <= 9)
+            _b2 = sum(1 for x in col if 10 <= x <= 19)
+            _b3 = sum(1 for x in col if 20 <= x <= 29)
+            _b4 = sum(1 for x in col if x >= 30)
+            return f"{_b1}B - {_b2}O - {_b3}Y - {_b4}Ot"
             
         def get_k(col):
             roots = [x % 10 for x in col]
@@ -1869,82 +2428,127 @@ elif selected_game == "ŞANS TOPU AI":
             ust = sum(1 for x in col if x >= 18)
             return f"{alt} Alt - {ust} Üst"
 
-        # --- ÜRETİM ALANI (EN ÜSTTE ORTALANMIŞ) ---
+        # --- ÜRETİM ALANI (SİHİRLİ BUTON VE MANUEL SEÇİM) ---
         st.info(f"{msg} | **Son Çekiliş:** {valid_draws[0]}")
         st.markdown("---")
         
         if "uretim_ekrani_acik" not in st.session_state:
             st.session_state.uretim_ekrani_acik = False
+        if "ai_uretim_ekrani_acik" not in st.session_state:
+            st.session_state.ai_uretim_ekrani_acik = False
 
         basla_btn = False
+        ai_basla_btn = False
         kolon_sayisi = 1
-
-        if not st.session_state.uretim_ekrani_acik:
-            c_btn_sol, c_btn_orta, c_btn_sag = st.columns([1, 2, 1])
-            with c_btn_orta:
-                if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", type="primary", use_container_width=True):
-                    st.session_state.uretim_ekrani_acik = True
-                    st.rerun() 
         
-        if st.session_state.uretim_ekrani_acik:
-            st.markdown("""
-                <div style='border: 3px solid #1e3a8a; border-radius: 12px; padding: 20px; background-color: #f8fafc; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.15); margin-bottom: 20px;'>
-                    <h3 style='color: #1e3a8a; margin-top: 0; font-weight: 900; text-align: center; letter-spacing: 1px;'>🤖 KUSURSUZ ÜRETİM ONAYI</h3>
-                    <p style='color: #334155; text-align: center; font-size: 16px; font-weight: 600; margin-bottom: 0px;'>Yapay Zeka'nın sizin için kaç adet kolon üretmesini istersiniz?</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
-            
-            with c_orta:
-                st.markdown("<div style='background-color:#1e3a8a; border:2px solid #0f172a; padding:10px; border-radius:8px; text-align:center; font-weight:900; color:#ffffff; font-size:16px; margin-bottom:5px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); letter-spacing: 1px;'>🔢 KOLON ADEDİ SEÇİN</div>", unsafe_allow_html=True)
-                kolon_sayisi = st.number_input("Kolon Adedi", min_value=1, max_value=10, value=1, label_visibility="collapsed")
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                basla_btn = st.button("✅ MOTORU ATEŞLE VE ÜRET", type="primary", use_container_width=True)
-            with col_btn2:
-                iptal_btn = st.button("❌ İPTAL", use_container_width=True)
-                
-            if iptal_btn:
-                st.session_state.uretim_ekrani_acik = False
-                st.rerun()
+        is_vip_or_admin = st.session_state.get("is_vip", False) or st.session_state.get("user_email", "") == "admin@kaptan.com"
 
-        if basla_btn:
+        if not st.session_state.uretim_ekrani_acik and not st.session_state.ai_uretim_ekrani_acik:
+            st.markdown("<h4 style='text-align:center; color:#1e293b; font-weight:900;'>Kuponunuzu Nasıl Üretmek İstersiniz?</h4>", unsafe_allow_html=True)
+            c_btn_sol, c_btn_sag = st.columns(2)
+            
+            with c_btn_sol:
+                st.markdown("""
+                <div style='background-color:#f1f5f9; padding:15px; border-radius:8px; border:2px solid #cbd5e1; text-align:center; margin-bottom:10px;'>
+                    <h5 style='color:#334155; margin-top:0;'>🎛️ MANUEL FİLTRELERLE</h5>
+                    <p style='font-size:12px; color:#64748b; margin-bottom:0;'>Sol menüdeki kendi belirlediğiniz kurallara sadık kalarak üretim yapar.</p>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", use_container_width=True, key="btn_manuel_sans"):
+                    st.session_state.uretim_ekrani_acik = True
+                    st.rerun()
+                    
+            with c_btn_sag:
+                st.markdown("""
+                <div style='background-color:#ecfdf5; padding:15px; border-radius:8px; border:2px solid #059669; text-align:center; margin-bottom:10px;'>
+                    <h5 style='color:#059669; margin-top:0; font-weight:900;'>🪄 YAPAY ZEKAYA DEVRET</h5>
+                    <p style='font-size:12px; color:#064e3b; margin-bottom:0;'>Filtrelerle uğraşmayın! Makine tüm geçmişi tarayıp en ideal altın oranlı kuponu bulsun.</p>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("✨ SİHİRLİ OTOPİLOT İLE ÜRET", type="primary", use_container_width=True, key="btn_ai_sans"):
+                    st.session_state.ai_uretim_ekrani_acik = True
+                    st.rerun()
+
+        # 1. MANUEL ÜRETİM ONAY EKRANI
+        if st.session_state.uretim_ekrani_acik:
+            st.markdown("<div style='border: 3px solid #64748b; border-radius: 12px; padding: 20px; background-color: #f8fafc; text-align: center; margin-bottom: 20px;'><h3 style='color: #334155; margin-top: 0;'>🎛️ MANUEL ÜRETİM ONAYI</h3></div>", unsafe_allow_html=True)
+            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
+            with c_orta:
+                max_kolon_hakki = 100 if is_vip_or_admin else 3
+                kolon_sayisi = st.number_input(f"Kolon Adedi (Maksimum {max_kolon_hakki})", min_value=1, max_value=max_kolon_hakki, value=1, key="manuel_adet")
+                if not is_vip_or_admin:
+                    st.info("💡 Ziyaretçiler ve Standart üyeler manuel olarak en fazla 3 kolon üretebilir. Sınırsız üretim için VIP'ye geçin.")
+                
+                col_m1, col_m2 = st.columns(2)
+                with col_m1: basla_btn = st.button("✅ ÜRET", type="primary", use_container_width=True, key="sans_basla_m")
+                with col_m2: 
+                    if st.button("❌ İPTAL", use_container_width=True, key="iptal_m"):
+                        st.session_state.uretim_ekrani_acik = False
+                        st.rerun()
+
+        # 2. SİHİRLİ YAPAY ZEKA ONAY EKRANI
+        if st.session_state.ai_uretim_ekrani_acik:
+            st.markdown("<div style='border: 3px solid #e11d48; border-radius: 12px; padding: 20px; background-color: #fff1f2; text-align: center; margin-bottom: 20px;'><h3 style='color: #e11d48; margin-top: 0;'>🪄 YAPAY ZEKA OTO-PİLOT ONAYI</h3><p>Makine sizin için tüm ayarları optimize edecek.</p></div>", unsafe_allow_html=True)
+            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
+            with c_orta:
+                max_ai_hakki = 100 if is_vip_or_admin else 1
+                kolon_sayisi = st.number_input(f"Kolon Adedi (Maksimum {max_ai_hakki})", min_value=1, max_value=max_ai_hakki, value=1, key="ai_adet")
+                if not is_vip_or_admin:
+                    st.warning("👑 Sihirli buton ziyaretçiler için 1 kolonla sınırlıdır. Tüm kuponu yapay zekaya doldurtmak için VIP'ye geçin.")
+                
+                col_a1, col_a2 = st.columns(2)
+                with col_a1: ai_basla_btn = st.button("✨ SİHRİ BAŞLAT", type="primary", use_container_width=True, key="sans_basla_ai")
+                with col_a2: 
+                    if st.button("❌ İPTAL", use_container_width=True, key="iptal_a"):
+                        st.session_state.ai_uretim_ekrani_acik = False
+                        st.rerun()
+
+        # ÜRETİM MOTORU (HEM MANUEL HEM AI İÇİN ORTAK ÇALIŞIR)
+        if basla_btn or ai_basla_btn:
             st.session_state.uretim_ekrani_acik = False 
+            st.session_state.ai_uretim_ekrani_acik = False
+            
             with st.spinner('Kuantum eleme motoru ve Yapay Zeka zırhı devrede...'):
-                time.sleep(0.5)
+                time.sleep(1)
                 
                 last_draw_nums = valid_draws[0]
                 devirler = []
                 ekstra_yasaklar = []
-                
-                if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
-                    ekstra_yasaklar.extend(last_draw_nums)
-                elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
-                    devirler = [int(x.strip()) for x in devir_sayisi_str.split(',') if x.strip().isdigit()]
-                
-                yasaklar_input = [int(x.strip()) for x in yasak_sayilar_str.split(',') if x.strip().isdigit()]
-                yasaklar = list(set(yasaklar_input + ekstra_yasaklar))
-                
-                bankolar = [int(x.strip()) for x in banko_sayilar_str.split(',') if x.strip().isdigit()]
-                sabit_sayilar = list(set(devirler + bankolar))
-                
+                yasaklar = []
+                sabit_sayilar = []
                 errors = []
-                if sicak_hedef + orta_hedef + soguk_hedef != 5: errors.append("Sıcak+Orta+Soğuk = 5 olmalı.")
-                if tek_hedef + cift_hedef != 5: errors.append("Tek+Çift = 5 olmalı.")
-                if b1 + b2 + b3 + b4 != 5: errors.append("Basamak toplamları = 5 olmalı.")
-                if alt_hedef + ust_hedef != 5: errors.append("Alt+Üst bölge = 5 olmalı.")
-                if len(sabit_sayilar) > 5: errors.append("Banko ve Devir sayılarının toplamı 5'i geçemez.")
-                for s in sabit_sayilar:
-                    if s in yasaklar: errors.append(f"Hata: {s} sayısı hem Banko/Devir hem de Yasaklı listesinde olamaz!")
                 
-                if devir_secimi == "VAR (Sayıyı ben seçeceğim)":
-                    for d in devirler:
-                        if d not in last_draw_nums:
-                            errors.append(f"Hata: Girdiğiniz '{d}' sayısı geçen haftanın çekilişinde yok! Lütfen geçerli bir devir sayısı girin: {last_draw_nums}")
+                # SİHİRLİ BUTON (AI) SEÇİLDİYSE KURALLARI MAKİNE KENDİ KOYAR
+                if ai_basla_btn:
+                    sicak_hedef, orta_hedef, soguk_hedef = 2, 2, 1
+                    tek_hedef, cift_hedef = 3, 2
+                    b1, b2, b3, b4 = 1, 1, 2, 1 
+                    alt_hedef, ust_hedef = 2, 3
+                    ardisik = "YOK"
+                    kese_koku = "YOK"
+                    devir_secimi = "Farketmez"
+                    min_toplam, max_toplam = 75, 95 
+                    min_kapsam, max_kapsam = 15, 30
+                else:
+                    # MANUEL SEÇİLDİYSE SOL MENÜDEKİ AYARLARI KULLAN
+                    if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
+                        ekstra_yasaklar.extend(last_draw_nums)
+                    elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                        devirler = [int(x.strip()) for x in devir_sayisi_str.split(',') if x.strip().isdigit()]
+                    
+                    yasaklar_input = [int(x.strip()) for x in yasak_sayilar_str.split(',') if x.strip().isdigit()]
+                    yasaklar = list(set(yasaklar_input + ekstra_yasaklar))
+                    
+                    bankolar = [int(x.strip()) for x in banko_sayilar_str.split(',') if x.strip().isdigit()]
+                    sabit_sayilar = list(set(devirler + bankolar))
+
+                    if sicak_hedef + orta_hedef + soguk_hedef != 5: errors.append("Sıcak+Orta+Soğuk = 5 olmalı.")
+                    if tek_hedef + cift_hedef != 5: errors.append("Tek+Çift = 5 olmalı.")
+                    if b1 + b2 + b3 + b4 != 5: errors.append("Basamak toplamları = 5 olmalı.")
+                    if alt_hedef + ust_hedef != 5: errors.append("Alt+Üst bölge = 5 olmalı.")
+                    if len(sabit_sayilar) > 5: errors.append("Banko ve Devir sayılarının toplamı 5'i geçemez.")
+                    for s in sabit_sayilar:
+                        if s in yasaklar: errors.append(f"Hata: {s} sayısı hem Banko/Devir hem de Yasaklı listesinde olamaz!")
 
                 if errors:
                     for e in errors: st.error(e)
@@ -1952,532 +2556,610 @@ elif selected_game == "ŞANS TOPU AI":
                     adaylar = [x for x in range(1, 35) if x not in yasaklar and x not in sabit_sayilar]
                     kalan_secim_sayisi = 5 - len(sabit_sayilar)
                     
-                    valid_combinations = []
-                    for comb in combinations(adaylar, kalan_secim_sayisi):
-                        col = sorted(sabit_sayilar + list(comb))
-                        
-                        if devir_secimi == "VAR (Sistem rastgele 1 sayı seçsin)":
-                            ortak_sayi_adedi = sum(1 for x in col if x in last_draw_nums)
-                            if ortak_sayi_adedi != 1: 
+                    hot_pool = [x for x in hot_nums if x in adaylar]
+                    med_pool = [x for x in medium_nums if x in adaylar]
+                    cold_pool = [x for x in cold_nums if x in adaylar]
+
+                    b_hot = sum(1 for x in sabit_sayilar if x in hot_nums)
+                    b_med = sum(1 for x in sabit_sayilar if x in medium_nums)
+                    b_cold = sum(1 for x in sabit_sayilar if x in cold_nums)
+
+                    req_hot = sicak_hedef - b_hot
+                    req_med = orta_hedef - b_med
+                    req_cold = soguk_hedef - b_cold
+
+                    if req_hot < 0 or req_med < 0 or req_cold < 0:
+                        st.error("🚨 HATA: Banko sayılarının frekansları, belirlediğin hedefleri aşıyor!")
+                    elif req_hot > len(hot_pool) or req_med > len(med_pool) or req_cold > len(cold_pool):
+                        st.error(f"🚨 HATA: Kotalar havuzdaki sayıları aşıyor! Lütfen kuralları esnetin.")
+                    else:
+                        valid_combinations = []
+                        hata_kodlari = {
+                            "frekans_havuzu": 0, "devir": 0, "tek_cift": 0, 
+                            "bolge": 0, "basamak": 0, "kok": 0, "ardisik": 0, "can_kapsam": 0
+                        }
+
+                        attempts = 0
+                        max_attempts = 150000 
+
+                        while len(valid_combinations) < (kolon_sayisi * 3) and attempts < max_attempts:
+                            attempts += 1
+                            
+                            h_pick = random.sample(hot_pool, req_hot) if req_hot > 0 else []
+                            m_pick = random.sample(med_pool, req_med) if req_med > 0 else []
+                            c_pick = random.sample(cold_pool, req_cold) if req_cold > 0 else []
+                            
+                            col = sorted(sabit_sayilar + h_pick + m_pick + c_pick)
+                            
+                            if len(set(col)) != 5: 
+                                hata_kodlari["frekans_havuzu"] += 1
                                 continue
 
-                        bas_1 = sum(1 for x in col if x <= 9)
-                        bas_2 = sum(1 for x in col if 10 <= x <= 19)
-                        bas_3 = sum(1 for x in col if 20 <= x <= 29)
-                        bas_4 = sum(1 for x in col if x >= 30)
-                        if bas_1 != b1 or bas_2 != b2 or bas_3 != b3 or bas_4 != b4: continue
-                        
-                        tek = sum(1 for x in col if x % 2 != 0)
-                        if tek != tek_hedef or (5 - tek) != cift_hedef: continue
-                        
-                        s = sum(1 for x in col if x in hot_nums)
-                        o = sum(1 for x in col if x in medium_nums)
-                        c = sum(1 for x in col if x in cold_nums)
-                        if s != sicak_hedef or o != orta_hedef or c != soguk_hedef: continue
-                        
-                        has_cons = any(col[i]+1 == col[i+1] for i in range(4))
-                        if (ardisik == "VAR" and not has_cons) or (ardisik == "YOK" and has_cons): continue
-                        
-                        roots = [x % 10 for x in col]
-                        r_counts = list(Counter(roots).values())
-                        r_counts.sort(reverse=True)
-                        if kese_koku == "VAR (1 Çift)":
-                            if r_counts != [2, 1, 1]: continue
-                        else:
-                            if r_counts != [1, 1, 1, 1, 1]: continue
-                        
-                        if any(is_enemy(pair[0], pair[1]) for pair in combinations(col, 2)): continue
-                        if not (min_toplam <= sum(col) <= max_toplam): continue
-                        if not (min_kapsam <= (col[-1] - col[0]) <= max_kapsam): continue
-                        
-                        alt = sum(1 for x in col if x <= 17)
-                        if alt != alt_hedef or (5 - alt) != ust_hedef: continue
-                        
-                        valid_combinations.append({
-                            'c': col, 'sum': sum(col), 'klan': len(set([klan_labels[x] for x in col if x in klan_labels]))
-                        })
-
-                    if len(valid_combinations) > 0:
-                        valid_combinations.sort(key=lambda x: (-x['klan'], abs(x['sum'] - 86.4)))
-                        
-                        gosterilecek_adet = min(kolon_sayisi, len(valid_combinations))
-                    
-                        if gosterilecek_adet < kolon_sayisi:
-                            st.warning(f"Sadece {len(valid_combinations)} kusursuz dizilim bulunabildi. Kurallarınız çok katı olduğu için {kolon_sayisi} adet kolon oluşturulamadı. Bulunanların tamamı aşağıdadır:")
-                        else:
-                            st.success(f"Tüm ağır filtreler aşıldı! Havuzdaki {len(valid_combinations)} kusursuz dizilim arasından EN İYİ {gosterilecek_adet} kolon seçildi.")
-
-                        for i in range(gosterilecek_adet):
-                            secilen = valid_combinations[i]['c']
-                            klan_degeri = valid_combinations[i]['klan']
-                            
-                            if kolon_sayisi > 1:
-                                st.markdown(f"<h4 style='color:#dc2626; text-align:center; margin-top:20px; font-weight:900; background-color:#fef2f2; padding:5px; border-radius:5px;'>✨ KOLON {i+1}</h4>", unsafe_allow_html=True)
-                            
-                            # --- YAPAY ZEKA +1 SEÇİM MOTORU ---
-                            try:
-                                # Analizi sistemi yormamak için sadece üretim anında 1 kez yapıyoruz
-                                if "smart_plus_pool" not in st.session_state:
-                                    import pandas as pd
-                                    import random
-                                    from collections import Counter
-                                    
-                                    # 6. Sütun (index 5) Şans Topundaki +1 sayılardır
-                                    df_plus = pd.read_excel('chance.son.xlsx', sheet_name=0, header=None, engine='openpyxl')
-                                    all_plus = pd.to_numeric(df_plus.iloc[:, 5], errors='coerce').dropna().astype(int).tolist()
-                                    all_plus = [x for x in all_plus if 1 <= x <= 14]
-                                    
-                                    p_counts = Counter(all_plus)
-                                    # KURAL 1: Tarihin en çok çıkan 3 "Sıcak" artı sayısı
-                                    hot_p = [x[0] for x in p_counts.most_common(3)]
-                                    
-                                    # KURAL 2: Son 15 haftada gelmeyen "Uyuyan" artı sayılar
-                                    recent_p = all_plus[:15]
-                                    sleep_p = [x for x in range(1, 15) if x not in recent_p]
-                                    
-                                    # Havuzu birleştir (Sıcaklar ve Uyuyanlar)
-                                    st.session_state.smart_plus_pool = hot_p + (sleep_p if sleep_p else [random.choice(range(1,15))])
+                            # --- BASAMAK REFLEKSİ ---
+                            b1_c = sum(1 for x in col if x <= 9)
+                            b2_c = sum(1 for x in col if 10 <= x <= 19)
+                            b3_c = sum(1 for x in col if 20 <= x <= 29)
+                            b4_c = sum(1 for x in col if x >= 30)
+                            if b1_c != b1 or b2_c != b2 or b3_c != b3 or b4_c != b4:
+                                hata_kodlari["basamak"] += 1
+                                continue
                                 
-                                # Kesişen seçkin havuzdan bu kolona özel akıllı seçim yap
-                                secilen_arti = random.choice(st.session_state.smart_plus_pool)
-                            except:
-                                # Eğer dosyadan +1 okumada bir sorun olursa, standart altın oran sayılarından seç
-                                import random
-                                secilen_arti = random.choice([2, 4, 7, 9, 12, 14])
+                            # --- TEK/ÇİFT REFLEKSİ ---
+                            tek = sum(1 for x in col if x % 2 != 0)
+                            if tek != tek_hedef: 
+                                hata_kodlari["tek_cift"] += 1
+                                continue
+                                
+                            # --- BÖLGE REFLEKSİ ---
+                            alt = sum(1 for x in col if x <= 17)
+                            if alt != alt_hedef:
+                                hata_kodlari["bolge"] += 1
+                                continue
 
-                            html_balls = f"""
-                            <div style='text-align: center; margin: 15px 0 10px 0;'>
-                                <div class='number-ball ball-blue'>{secilen[0]}</div>
-                                <div class='number-ball ball-blue'>{secilen[1]}</div>
-                                <div class='number-ball ball-blue'>{secilen[2]}</div>
-                                <div class='number-ball ball-blue'>{secilen[3]}</div>
-                                <div class='number-ball ball-blue'>{secilen[4]}</div>
-                                <span style='font-size:30px; font-weight:bold; color:#64748b; margin: 0 15px;'>+</span>
-                                <div class='plus-ball ball-red'>{secilen_arti}</div>
-                            </div>
-                            <div style='text-align: center; margin-bottom: 25px;'>
-                                <span style='font-size:12px; color:#ef4444; font-weight:bold; background-color:#fef2f2; padding:3px 8px; border-radius:12px; border:1px solid #fca5a5;'>🤖 Akıllı +1 (Sıcak/Uyuyan Havuzundan)</span>
-                            </div>
-                            """
-                            st.markdown(html_balls, unsafe_allow_html=True)
+                            # --- KÖK EŞLEŞMESİ REFLEKSİ ---
+                            roots = [x % 10 for x in col]
+                            unique_roots = len(set(roots))
                             
-                            mc1, mc2, mc3, mc4 = st.columns(4)
-                            with mc1: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>📉 Çan Eğrisi</b><br><span style='font-size:20px; color:#d80073;'>{sum(secilen)}</span></div>", unsafe_allow_html=True)
-                            with mc2: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>↔️ Kapsam</b><br><span style='font-size:20px; color:#d80073;'>{secilen[-1] - secilen[0]}</span></div>", unsafe_allow_html=True)
-                            with mc3: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🛡️ Klan Zırhı</b><br><span style='font-size:20px; color:#5a9bd5;'>{klan_degeri} Farklı</span></div>", unsafe_allow_html=True)
-                            with mc4: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🤖 Düşman Testi</b><br><span class='highlight-yellow' style='font-size:16px;'>0 (Temiz)</span></div>", unsafe_allow_html=True)
+                            if kese_koku == "VAR (1 Çift)":
+                                if unique_roots != 4: 
+                                    hata_kodlari["kok"] += 1
+                                    continue
+                            elif kese_koku == "YOK":
+                                if unique_roots != 5: 
+                                    hata_kodlari["kok"] += 1
+                                    continue
+
+                            # --- KESİN EMİR UYGULAMASI (ÇİFT ARDIŞIK ENGELİ) ---
+                            cons_count = 0
+                            for i in range(4):
+                                if col[i] + 1 == col[i+1]:
+                                    cons_count += 1
+                                    
+                            if cons_count > 1: 
+                                hata_kodlari["ardisik"] += 1
+                                continue
+                                
+                            has_cons = (cons_count == 1)
+
+                            if (ardisik == "VAR" and not has_cons) or (ardisik == "YOK" and has_cons): 
+                                hata_kodlari["ardisik"] += 1
+                                continue
+
+                            toplam = sum(col)
+                            if not (min_toplam <= toplam <= max_toplam):
+                                hata_kodlari["can_kapsam"] += 1
+                                continue
+                                
+                            if not (min_kapsam <= (col[-1] - col[0]) <= max_kapsam):
+                                hata_kodlari["can_kapsam"] += 1
+                                continue
+
+                            if not ai_basla_btn and devir_secimi == "VAR (Sistem rastgele 1 sayı seçsin)":
+                                if sum(1 for x in col if x in valid_draws[0]) != 1:
+                                    hata_kodlari["devir"] += 1
+                                    continue
+                            elif devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
+                                if any(x in valid_draws[0] for x in col): 
+                                    hata_kodlari["devir"] += 1
+                                    continue
+                            elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                                try:
+                                    ds = int(devir_sayisi_str)
+                                    if ds not in col or sum(1 for x in col if x in valid_draws[0]) != 1: 
+                                        hata_kodlari["devir"] += 1
+                                        continue
+                                except: 
+                                    pass
+
+                            dusman_skoru = sum(1 for pair in combinations(col, 2) if is_enemy(pair[0], pair[1]))
+                            klan_cesitliligi = len(set([klan_labels.get(x, 0) for x in col]))
                             
-                            if i < gosterilecek_adet - 1:
-                                st.markdown("<hr style='border: 1px dashed #cbd5e1; margin: 30px 0;'>", unsafe_allow_html=True)
-                    else:
-                        st.error("🚨 PARADOKS TESPİT EDİLDİ: Bu kadar katı kuralı aynı anda sağlayan hiçbir sayı evrende bulunamadı. Kurallardan birini esnetin.")
+                            valid_combinations.append({
+                                'c': tuple(col), 'sum': sum(col), 'klan': klan_cesitliligi, 'dusman_sayisi': dusman_skoru
+                            })
+                            
+                            unique_v = {v['c']: v for v in valid_combinations}.values()
+                            valid_combinations = list(unique_v)
 
-       # --- 4 YENİ SEKME ---
-        st.markdown("<br><hr style='border: 3px solid #e2e8f0; margin-bottom: 25px;'>", unsafe_allow_html=True)
-        
-        # 3. ve 4. Sekmeleri diğerleriyle aynı kalınlıkta ve siyah yapmak için CSS müdahalesi
-        st.markdown("""
-        <style>
-        button[data-baseweb="tab"]:nth-child(3) p, button[data-baseweb="tab"]:nth-child(4) p {
-            font-weight: 900 !important;
-            font-size: 16px !important;
-            color: #000000 !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        tab_tarih, tab_detayli, tab_simulasyon, tab_sorgu = st.tabs([
-            "📈 TARİHSEL BİLANÇO (GENEL İSTATİSTİK)", 
-            "🧠 DETAYLI YAPAY ZEKA ANALİZİ", 
-            "🎯 SONRAKİ ÇEKİLİŞ SİMÜLASYONU",
-            "🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU"
-        ])
+                        if len(valid_combinations) > 0:
+                            valid_combinations.sort(key=lambda x: (x['dusman_sayisi'], -x['klan'], abs(x['sum'] - 86.4)))
+                            gosterilecek_adet = min(kolon_sayisi, len(valid_combinations))
+                        
+                            if ai_basla_btn:
+                                st.success(f"🪄 Yapay Zeka oyunun matematiksel DNA'sını çözdü ve sizin için en kusursuz {gosterilecek_adet} kolonu oluşturdu!")
+                            else:
+                                if gosterilecek_adet < kolon_sayisi:
+                                    st.warning(f"Sadece {len(valid_combinations)} kusursuz dizilim bulunabildi. Kurallarınız çok katı olduğu için tamamı aşağıdadır:")
+                                else:
+                                    st.success(f"Tüm katı filtreler başarıyla aşıldı! Havuzdaki kusursuz dizilimler arasından EN İYİ {gosterilecek_adet} kolon kurgulandı.")
 
-        with tab_tarih:
-            last_d = valid_draws[0]
-            st.markdown("#### 🎯 SON ÇEKİLİŞİN MR'I (Röntgen)")
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(f"<div class='metric-card' style='padding:10px;'><b>Frekans Şablonu</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_f_pattern(last_d)}</span></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='metric-card' style='padding:10px;'><b>Tek/Çift Dengesi</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_tc(last_d)}</span></div>", unsafe_allow_html=True)
-            c3.markdown(f"<div class='metric-card' style='padding:10px;'><b>Ardışık Durumu</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_ard(last_d)}</span></div>", unsafe_allow_html=True)
-            
-            c4, c5, c6 = st.columns(3)
-            c4.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Kök Eşleşmesi</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_k(last_d)}</span></div>", unsafe_allow_html=True)
-            c5.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Basamak Dağılımı</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_basamak_pattern(last_d)}</span></div>", unsafe_allow_html=True)
-            
-            devir_bilgisi = get_dev(valid_draws[1], last_d) if len(valid_draws) > 1 else "YOK"
-            c6.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Devir (Geçen Haftadan)</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{devir_bilgisi}</span></div>", unsafe_allow_html=True)
-            
-            st.markdown("<br>#### 📊 OYUNUN GENEL KARAKTERİ (Tüm Zamanlar)", unsafe_allow_html=True)
-            
-            hist_f = Counter()
-            hist_tc = Counter()
-            hist_ard = Counter()
-            hist_kok = Counter()
-            hist_dev = Counter()
-            hist_bas = Counter()
-            hist_bolge = Counter()
-            
-            for i in range(len(valid_draws)):
-                d = valid_draws[i]
-                hist_f[get_f_pattern(d)] += 1
-                hist_tc[get_tc(d)] += 1
-                hist_ard[get_ard(d)] += 1
-                hist_kok[get_k(d)] += 1
-                hist_bas[get_basamak_pattern(d)] += 1
-                hist_bolge[get_bolge_pattern_sans(d)] += 1
-                if i < len(valid_draws) - 1:
-                    hist_dev[get_dev(valid_draws[i+1], valid_draws[i])] += 1
-                    
-            tot = len(valid_draws)
-            tot_dev = tot - 1 if tot > 1 else 1
-            
-            def render_bar(label, count, total_val):
-                pct = (count / total_val) * 100
-                return f'''
-                <div style="margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                        <span style="font-weight: 800; color: #334155; font-size: 13px;">{label}</span>
-                        <span style="font-weight: 900; color: #db2777; font-size: 13px;">%{pct:.1f} <span style="color:#94a3b8; font-size:11px;">({count} Kez)</span></span>
-                    </div>
-                    <div style="width: 100%; background-color: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
-                        <div style="width: {pct}%; background-color: #db2777; height: 100%;"></div>
-                    </div>
-                </div>
-                '''
-                
-            col_bar1, col_bar2 = st.columns(2)
-            with col_bar1:
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🔥 En Çok Gelen Frekanslar (İlk 5)</h5>", unsafe_allow_html=True)
-                for k, v in hist_f.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎲 Ardışık Sayı Durumu</h5>", unsafe_allow_html=True)
-                for k, v in hist_ard.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>♻️ Geçen Haftadan Devir (Kilit Sayı)</h5>", unsafe_allow_html=True)
-                for k, v in hist_dev.most_common(): st.markdown(render_bar(k, v, tot_dev), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+                            for i in range(gosterilecek_adet):
+                                secilen = valid_combinations[i]['c']
+                                klan_degeri = valid_combinations[i]['klan']
+                                d_skor = valid_combinations[i]['dusman_sayisi']
+                                
+                                if kolon_sayisi > 1:
+                                    st.markdown(f"<h4 style='color:#dc2626; text-align:center; margin-top:20px; font-weight:900; background-color:#fef2f2; padding:5px; border-radius:5px;'>✨ KOLON {i+1}</h4>", unsafe_allow_html=True)
+                                
+                                try:
+                                    if "smart_plus_pool" not in st.session_state:
+                                        import pandas as pd
+                                        import random
+                                        from collections import Counter
+                                        df_plus = pd.read_excel('chance.son.xlsx', sheet_name=0, header=None, engine='openpyxl')
+                                        all_plus = pd.to_numeric(df_plus.iloc[:, 5], errors='coerce').dropna().astype(int).tolist()
+                                        all_plus = [x for x in all_plus if 1 <= x <= 14]
+                                        p_counts = Counter(all_plus)
+                                        hot_p = [x[0] for x in p_counts.most_common(3)]
+                                        sleep_p = [x for x in range(1, 15) if x not in all_plus[:15]]
+                                        st.session_state.smart_plus_pool = hot_p + (sleep_p if sleep_p else [random.choice(range(1,15))])
+                                    secilen_arti = random.choice(st.session_state.smart_plus_pool)
+                                except:
+                                    import random
+                                    secilen_arti = random.choice([2, 4, 7, 9, 12, 14])
 
-            with col_bar2:
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>⚖️ Tek/Çift Dağılımı</h5>", unsafe_allow_html=True)
-                for k, v in hist_tc.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🧩 Kök Eşleşmesi (Son Rakam)</h5>", unsafe_allow_html=True)
-                for k, v in hist_kok.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎯 Alt-Üst Bölge Dağılımı</h5>", unsafe_allow_html=True)
-                for k, v in hist_bolge.most_common(4): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+                                html_balls = f"""
+                                <div style='text-align: center; margin: 15px 0 10px 0;'>
+                                    <div class='number-ball ball-blue'>{secilen[0]}</div>
+                                    <div class='number-ball ball-blue'>{secilen[1]}</div>
+                                    <div class='number-ball ball-blue'>{secilen[2]}</div>
+                                    <div class='number-ball ball-blue'>{secilen[3]}</div>
+                                    <div class='number-ball ball-blue'>{secilen[4]}</div>
+                                    <span style='font-size:30px; font-weight:bold; color:#64748b; margin: 0 15px;'>+</span>
+                                    <div class='plus-ball ball-red'>{secilen_arti}</div>
+                                </div>
+                                <div style='text-align: center; margin-bottom: 25px;'>
+                                    <span style='font-size:12px; color:#ef4444; font-weight:bold; background-color:#fef2f2; padding:3px 8px; border-radius:12px; border:1px solid #fca5a5;'>🤖 Akıllı +1 (Sıcak/Uyuyan Havuzundan)</span>
+                                </div>
+                                """
+                                st.markdown(html_balls, unsafe_allow_html=True)
+                                
+                                dusman_etiketi = f"{d_skor} (Esnetildi)" if d_skor > 0 else "0 (Temiz)"
+                                renk = "#eab308" if d_skor > 0 else "#22c55e"
+                                
+                                mc1, mc2, mc3, mc4 = st.columns(4)
+                                with mc1: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>📉 Çan Eğrisi</b><br><span style='font-size:20px; color:#d80073;'>{sum(secilen)}</span></div>", unsafe_allow_html=True)
+                                with mc2: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>↔️ Kapsam</b><br><span style='font-size:20px; color:#d80073;'>{secilen[-1] - secilen[0]}</span></div>", unsafe_allow_html=True)
+                                with mc3: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🛡️ Klan Zırhı</b><br><span style='font-size:20px; color:#5a9bd5;'>{klan_degeri} Farklı</span></div>", unsafe_allow_html=True)
+                                with mc4: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🤖 Düşman Testi</b><br><span style='font-size:18px; font-weight:bold; color:{renk};'>{dusman_etiketi}</span></div>", unsafe_allow_html=True)
+                                
+                                if i < gosterilecek_adet - 1:
+                                    st.markdown("<hr style='border: 1px dashed #cbd5e1; margin: 30px 0;'>", unsafe_allow_html=True)
+                        else:
+                            st.error("🚨 PARADOKS TESPİT EDİLDİ: Seçtiğiniz kurallar havuzda hiçbir sayı bırakmadı!")
+                            en_cok_elenen = max(hata_kodlari, key=hata_kodlari.get)
+                            
+                            sebep_metni = ""
+                            if en_cok_elenen == "frekans_havuzu": sebep_metni = "Sıcak/Orta/Soğuk kotaları ile eldeki sayı havuzu yetersiz kalıyor."
+                            elif en_cok_elenen == "tek_cift": sebep_metni = "Havuzdaki sayıların güncel matematiği, istediğiniz Tek/Çift oranını vermiyor."
+                            elif en_cok_elenen == "bolge": sebep_metni = "İstediğiniz Alt/Üst bölge hedefi mevcut sayılarla imkansız."
+                            elif en_cok_elenen == "basamak": sebep_metni = "Basamak dağılımı (Birler, Onlar vb.) hedefleriniz, frekans ve bölge seçiminizle büyük bir çelişkiye (paradoksa) giriyor."
+                            elif en_cok_elenen == "devir": sebep_metni = "Devir kuralınız aktif frekans havuzlarında yer almıyor."
+                            elif en_cok_elenen == "can_kapsam": sebep_metni = "Çan Eğrisi veya Kapsam sınırlarınız çok dar. Sayılar bu aralığa sığamıyor."
+                            elif en_cok_elenen == "kok": sebep_metni = "Kök eşleşmesi kuralınız mevcut dar havuzda sağlanamıyor."
+                            elif en_cok_elenen == "ardisik": sebep_metni = "Sistem çift/üçlü ardışıkları reddettiği için elinizdeki havuz daraldı ve kuralınız çelişti."
+                                
+                            st.warning(f"""
+                            **🔍 GERÇEK X-RAY TEŞHİS RAPORU:**
+                            Motor {attempts} defa Kuantum taraması yaptı ancak sonuç alamadı. 
+                            Sistemi kilitleyen ASIL Kural: **{en_cok_elenen.upper()} FİLTRESİ**.
+                            
+                            **Kilitlenme Sebebi:** {sebep_metni}
+                            """)
 
-        with tab_detayli:
-            st.markdown("### 🧠 İLERİ DÜZEY İSTİHBARAT (RADAR SİSTEMİ)")
-            
-            col_rad1, col_rad2 = st.columns(2)
-            with col_rad1:
-                st.markdown("#### 🔥 ALEV ALANLAR (Momentum İvmesi)")
-                if momentum_sayilari:
-                    alevler_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
-                    for k, v in sorted(momentum_sayilari.items(), key=lambda item: item[1], reverse=True):
-                        alevler_html += f"<div style='background-color:#fffbea; border:1.5px solid #000000; border-radius:6px; padding:8px 10px; text-align:center; min-width:85px;'><div style='color:#b45309; font-size:13px; font-weight:900; margin-bottom:2px;'>Sayı {k}</div><div style='font-size:10px; color:#64748b; font-weight:bold; margin-bottom:3px;'>Son 10 Çekilişte</div><div style='font-size:16px; color:#dc2626; font-weight:900;'>{v} Kez</div></div>"
-                    alevler_html += "</div>"
-                    st.markdown(alevler_html, unsafe_allow_html=True)
-                else: st.info("Son 10 çekilişte çıldıran sayı yok.")
-                
-            with col_rad2:
-                st.markdown("#### 💤 UYUYAN DEVLER (Kuluçka)")
-                if uyuyan_devler:
-                    uyuyan_html = "<div style='display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
-                    for k, v in sorted(uyuyan_devler.items(), key=lambda item: item[1], reverse=True):
-                        uyuyan_html += f"<div style='background-color:#f0f9ff; border:1px solid #bae6fd; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;'><strong style='color:#0369a1; font-size:13px;'>Sayı {k}</strong><span style='font-size:12px; color:#64748b; font-weight:bold;'>{v} Çekiliştir Yok</span></div>"
-                    uyuyan_html += "</div>"
-                    st.markdown(uyuyan_html, unsafe_allow_html=True)
-                else: st.info("Uyuyan dev bulunmuyor.")
-
-            st.markdown("---")
-            st.markdown("<h4 style='color:#e61532;'>🧬 ÇAPRAZ GEÇİŞ ANALİZİ (MARKOV MATRİSİ)</h4>", unsafe_allow_html=True)
+        # --- 4 YENİ SEKME (GİZLEME KİLİDİ EKLENDİ) ---
+        if not (basla_btn or ai_basla_btn):
+            st.markdown("<br><hr style='border: 3px solid #e2e8f0; margin-bottom: 25px;'>", unsafe_allow_html=True)
             
             st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0ea5e9; padding: 12px 15px; margin-bottom: 15px; border-radius: 4px; color: #334155; font-size: 0.90rem; line-height: 1.5;'>
-                Frekansları seçin; <b>Yapay Zeka motoru</b> sizin için bu frekansın tarihte kaç kez yaşandığını, bu frekans geldiğinde <b>tek/çift</b> yüzdesini, <b>kök eşleşme</b> (rakamların sonu aynı olan sayılar örn: 15-25), önceki haftadan <b>devir</b> yüzdelerini, <b>ardışık, basamak ve alt/üst bölge</b> yüzdelerini sizin için hesaplasın.
-            </div>
+            <style>
+            button[data-baseweb="tab"]:nth-child(3) p, button[data-baseweb="tab"]:nth-child(4) p {
+                font-weight: 900 !important;
+                font-size: 16px !important;
+                color: #000000 !important;
+            }
+            </style>
             """, unsafe_allow_html=True)
+
             
-            st.markdown(f"""
-            <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
-                <div style="flex: 1; background-color: #fff5f5; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #c53030; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔥 SICAK (≥26): {len(hot_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #742a2a; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(hot_nums)))}</p>
-                </div>
-                <div style="flex: 1; background-color: #ebf8ff; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #2b6cb0; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔵 ORTA (20-25): {len(medium_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #2c5282; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(medium_nums)))}</p>
-                </div>
-                <div style="flex: 1; background-color: #fefbeb; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #b7791f; font-size: 0.90rem; display: block; margin-bottom: 5px;">❄️ SOĞUK (≤19): {len(cold_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #744210; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(cold_nums)))}</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            last_s = sum(1 for x in valid_draws[0] if x in hot_nums)
-            last_o = sum(1 for x in valid_draws[0] if x in medium_nums)
-            last_c = sum(1 for x in valid_draws[0] if x in cold_nums)
-            
-            st.markdown("""
-            <div style='border: 3px solid #000000; border-radius: 10px; padding: 20px; background-color: #f8fafc; margin-bottom: 20px; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.1);'>
-                <h4 style='text-align: center; color: #0f172a; font-weight: 900; margin-top: 0; margin-bottom: 20px; letter-spacing: 0.5px;'>🎯 HEDEF FREKANS KOMBİNASYONUNU SEÇİN</h4>
-            """, unsafe_allow_html=True)
-            
-            cc1, cc2, cc3 = st.columns(3)
-            with cc1:
-                st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
-                target_s = st.number_input("Sıcak (S)", 0, 5, last_s, key="ts_m", label_visibility="collapsed")
-            with cc2:
-                st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
-                target_o = st.number_input("Orta (O)", 0, 5, last_o, key="to_m", label_visibility="collapsed")
-            with cc3:
-                st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
-                target_c = st.number_input("Soğuk (C)", 0, 5, last_c, key="tc_m", label_visibility="collapsed")
+            tab_tarih, tab_detayli, tab_simulasyon, tab_sorgu = st.tabs([
+                "📈 TARİHSEL BİLANÇO (GENEL İSTATİSTİK)", 
+                "🧠 DETAYLI YAPAY ZEKA ANALİZİ", 
+                "🎯 SONRAKİ ÇEKİLİŞ SİMÜLASYONU",
+                "🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU"
+            ])
+
+            with tab_tarih:
+                last_d = valid_draws[0]
+                st.markdown("#### 🎯 SON ÇEKİLİŞİN MR'I (Röntgen)")
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f"<div class='metric-card' style='padding:10px;'><b>Frekans Şablonu</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_f_pattern(last_d)}</span></div>", unsafe_allow_html=True)
+                c2.markdown(f"<div class='metric-card' style='padding:10px;'><b>Tek/Çift Dengesi</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_tc(last_d)}</span></div>", unsafe_allow_html=True)
+                c3.markdown(f"<div class='metric-card' style='padding:10px;'><b>Ardışık Durumu</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_ard(last_d)}</span></div>", unsafe_allow_html=True)
                 
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if target_s + target_o + target_c != 5:
-                st.warning("⚠️ Sıcak, Orta ve Soğuk sayılarının toplamı tam 5 olmalıdır!")
-            else:
-                target_freq = f"{target_s}S - {target_o}O - {target_c}C"
-                t_draws = []
-                for i in range(1, len(valid_draws)):
-                    if get_f_pattern(valid_draws[i]) == target_freq:
-                        next_d = valid_draws[i-1]
-                        t_draws.append({
-                            'tc': get_tc(next_d), 'ard': get_ard(next_d), 'kok': get_k(next_d),
-                            'dev': get_dev(valid_draws[i], next_d), 'bas': get_basamak_pattern(next_d),
-                            'bolge': get_bolge_pattern_sans(next_d)
-                        })
-
-                if len(t_draws) > 0:
-                    st.info(f"**Seçilen Şablon:** {target_freq} | Tarihte bu şablondan sonra **{len(t_draws)}** kez çekiliş yapılmış:")
-                    tc_c = Counter([x['tc'] for x in t_draws])
-                    ard_c = Counter([x['ard'] for x in t_draws])
-                    kok_c = Counter([x['kok'] for x in t_draws])
-                    dev_c = Counter([x['dev'] for x in t_draws])
-                    bas_c = Counter([x['bas'] for x in t_draws])
-                    bolge_c = Counter([x['bolge'] for x in t_draws])
-                    
-                    def format_pct(counter):
-                        total = sum(counter.values())
-                        return "\n".join([f"- {k}: %{round((v/total)*100, 2)}" for k, v in counter.most_common()])
-                    
-                    copy_text = f"🎯 ÇAPRAZ ANALİZ ÇIKTISI (BAZ FREKANS: {target_freq} - {len(t_draws)} Kez Yaşandı)\n\n--- 1. TEK/ÇİFT REFLEKSİ ---\n{format_pct(tc_c)}\n\n--- 2. ARDIŞIK REFLEKSİ ---\n{format_pct(ard_c)}\n\n--- 3. KÖK EŞLEŞMESİ REFLEKSİ ---\n{format_pct(kok_c)}\n\n--- 4. DEVİR REFLEKSİ ---\n{format_pct(dev_c)}\n\n--- 5. BASAMAK REFLEKSİ ---\n{format_pct(bas_c)}\n\n--- 6. BÖLGE REFLEKSİ (Alt-Üst) ---\n{format_pct(bolge_c)}"
-                    
-                    st.markdown(f'''
-                    <div style="background-color: #ffffff; padding: 20px; border: 2px solid #000000; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                        <pre style="color: #000000; font-weight: 800; font-size: 15px; font-family: Consolas, monospace; background: transparent; border: none; margin: 0; padding: 0;">{copy_text}</pre>
+                c4, c5, c6 = st.columns(3)
+                c4.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Kök Eşleşmesi</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_k(last_d)}</span></div>", unsafe_allow_html=True)
+                c5.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Basamak Dağılımı</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{get_basamak_pattern(last_d)}</span></div>", unsafe_allow_html=True)
+                
+                devir_bilgisi = get_dev(valid_draws[1], last_d) if len(valid_draws) > 1 else "YOK"
+                c6.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Devir (Geçen Haftadan)</b><br><span style='color:#db2777; font-weight:900; font-size:16px;'>{devir_bilgisi}</span></div>", unsafe_allow_html=True)
+                
+                st.markdown("<br>#### 📊 OYUNUN GENEL KARAKTERİ (Tüm Zamanlar)", unsafe_allow_html=True)
+                
+                hist_f = Counter()
+                hist_tc = Counter()
+                hist_ard = Counter()
+                hist_kok = Counter()
+                hist_dev = Counter()
+                hist_bas = Counter()
+                hist_bolge = Counter()
+                
+                for i in range(len(valid_draws)):
+                    d = valid_draws[i]
+                    hist_f[get_f_pattern(d)] += 1
+                    hist_tc[get_tc(d)] += 1
+                    hist_ard[get_ard(d)] += 1
+                    hist_kok[get_k(d)] += 1
+                    hist_bas[get_basamak_pattern(d)] += 1
+                    hist_bolge[get_bolge_pattern_sans(d)] += 1
+                    if i < len(valid_draws) - 1:
+                        hist_dev[get_dev(valid_draws[i+1], valid_draws[i])] += 1
+                        
+                tot = len(valid_draws)
+                tot_dev = tot - 1 if tot > 1 else 1
+                
+                def render_bar(label, count, total_val):
+                    pct = (count / total_val) * 100
+                    return f'''
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span style="font-weight: 800; color: #334155; font-size: 13px;">{label}</span>
+                            <span style="font-weight: 900; color: #db2777; font-size: 13px;">%{pct:.1f} <span style="color:#94a3b8; font-size:11px;">({count} Kez)</span></span>
+                        </div>
+                        <div style="width: 100%; background-color: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
+                            <div style="width: {pct}%; background-color: #db2777; height: 100%;"></div>
+                        </div>
                     </div>
-                    ''', unsafe_allow_html=True)
-                else:
-                    st.warning(f"Tarihte daha önce {target_freq} şablonu yaşanıp ardından çekiliş yapılmamış.")
+                    '''
+                    
+                col_bar1, col_bar2 = st.columns(2)
+                with col_bar1:
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🔥 En Çok Gelen Frekanslar (İlk 5)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_f.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎲 Ardışık Sayı Durumu</h5>", unsafe_allow_html=True)
+                    for k, v in hist_ard.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>♻️ Geçen Haftadan Devir (Kilit Sayı)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_dev.most_common(): st.markdown(render_bar(k, v, tot_dev), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
 
-        with tab_simulasyon:
-            st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🎯 GELECEK HAFTA PROJEKSİYONU (YAPAY ZEKA TAHMİNİ)</h3>", unsafe_allow_html=True)
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #0ea5e9; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.15rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
-                Bu motor, son çekilişin 7 farklı DNA özelliğini alır, oyunun tüm geçmişini tarar ve tarihte bu özelliklerden sonra en yüksek ihtimalle nelerin geldiğini hesaplar.
-            </div>
-            """, unsafe_allow_html=True)
-            
-            history_sim = []
-            for i in range(len(valid_draws)):
-                d = valid_draws[i]
-                dev_durum = "Bilinmiyor"
-                if i + 1 < len(valid_draws):
-                    dev_durum = get_dev(valid_draws[i+1], d)
-                
-                history_sim.append({
-                    'freq': get_f_pattern(d),
-                    'oe': get_tc(d),
-                    'cons': get_ard(d),
-                    'root': get_k(d),
-                    'basamak': get_basamak_pattern(d),
-                    'alt_ust': get_bolge_pattern_sans(d),
-                    'devir': dev_durum
-                })
-            
-            last_sim = history_sim[0] 
-            
-            def render_transition(prop_key, target_val, title):
-                next_states = []
-                for i in range(1, len(history_sim)):
-                    if history_sim[i][prop_key] == target_val:
-                        next_states.append(history_sim[i-1][prop_key])
-                
-                html_str = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); height:100%;'>"
-                html_str += f"<h5 style='color:#0f172a; font-weight:900; font-size:15px; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
-                html_str += f"<p style='font-size:12px; color:#64748b; margin-bottom:10px;'>Son Çekiliş: <b style='color:#db2777;'>{target_val}</b></p>"
-                
-                if not next_states:
-                    html_str += "<span style='color:#64748b; font-size:13px;'>Tarihte örnek bulunamadı.</span></div>"
-                    return html_str
-                
-                c = Counter(next_states)
-                total = len(next_states)
-                html_str += "<ul style='margin-bottom:0; padding-left:20px; font-size:14px;'>"
-                for k, v in c.most_common(3): 
-                    pct = (v/total)*100
-                    html_str += f"<li style='margin-bottom:5px;'><b>%{pct:.1f}</b> ihtimalle <span style='color:#db2777; font-weight:bold;'>{k}</span></li>"
-                html_str += "</ul></div>"
-                return html_str
+                with col_bar2:
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>⚖️ Tek/Çift Dağılımı</h5>", unsafe_allow_html=True)
+                    for k, v in hist_tc.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🧩 Kök Eşleşmesi (Son Rakam)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_kok.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎯 Alt-Üst Bölge Dağılımı</h5>", unsafe_allow_html=True)
+                    for k, v in hist_bolge.most_common(4): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
 
-            st.markdown(f"<h5 style='color:#db2777; margin-bottom:15px;'>🔍 SON ÇEKİLİŞ ({valid_draws[0]}) BAZ ALINARAK YAPILAN MARKOV HESAPLAMALARI:</h5>", unsafe_allow_html=True)
-            
-            sc1, sc2, sc3 = st.columns(3)
-            with sc1:
-                st.markdown(render_transition('freq', last_sim['freq'], "1. Frekans Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('basamak', last_sim['basamak'], "4. Basamak Radarı"), unsafe_allow_html=True)
-            with sc2:
-                st.markdown(render_transition('alt_ust', last_sim['alt_ust'], "2. Alt/Üst Bölge Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('cons', last_sim['cons'], "5. Ardışık Sayı Radarı"), unsafe_allow_html=True)
-            with sc3:
-                st.markdown(render_transition('oe', last_sim['oe'], "3. Tek/Çift Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('root', last_sim['root'], "6. Kök Eşleşme Radarı"), unsafe_allow_html=True)
+            with tab_detayli:
+                st.markdown("### 🧠 İLERİ DÜZEY İSTİHBARAT (RADAR SİSTEMİ)")
                 
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown(render_transition('devir', last_sim['devir'], "7. Devir (Geçen Haftadan) Radarı"), unsafe_allow_html=True)
-            
-            st.markdown("<hr style='border: 2px dashed #cbd5e1; margin: 25px 0;'>", unsafe_allow_html=True)
-            st.markdown("#### 🚨 KRİTİK İSTİHBARAT: 'SAYI KESİLME' ALGORİTMASI")
-            
-            streak_3_count = 0
-            streak_4_count = 0
-            for num in range(1, 35):
-                for i in range(3, len(valid_draws)):
-                    if num in valid_draws[i] and num in valid_draws[i-1] and num in valid_draws[i-2]:
-                        streak_3_count += 1
-                        if num in valid_draws[i-3]:
-                            streak_4_count += 1
-                            
-            if streak_3_count > 0:
-                perc_devam = (streak_4_count / streak_3_count) * 100
-                perc_kesilme = 100 - perc_devam
-                st.markdown(f"""
-                <div style='background-color: #fff1f2; border: 2px solid #ef4444; padding: 15px; border-radius: 8px; color: #7f1d1d;'>
-                    Şans Topu tarihinde herhangi bir sayının <b>3 hafta ÜST ÜSTE çıkma durumu tam {streak_3_count} kez</b> yaşanmıştır.<br><br>
-                    Algoritmanın tespitine göre, 3 hafta üst üste çıkan bir sayının <b>4. HAFTA KESİN OLARAK KESİLME (GELMEME) ihtimali: <span style='font-size:22px; font-weight:900;'>%{perc_kesilme:.2f}</span></b>'dir.<br>
-                    <span style='font-size:14px; color:#991b1b;'><i>(Kupon yaparken, son 3 haftadır çıkan bir sayı varsa onu <b>%{perc_kesilme:.2f} matematiksel güvence ile</b> eleyebilirsiniz.)</i></span>
+                col_rad1, col_rad2 = st.columns(2)
+                with col_rad1:
+                    st.markdown("#### 🔥 ALEV ALANLAR (Momentum İvmesi)")
+                    if momentum_sayilari:
+                        alevler_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
+                        for k, v in sorted(momentum_sayilari.items(), key=lambda item: item[1], reverse=True):
+                            alevler_html += f"<div style='background-color:#fffbea; border:1.5px solid #000000; border-radius:6px; padding:8px 10px; text-align:center; min-width:85px;'><div style='color:#b45309; font-size:13px; font-weight:900; margin-bottom:2px;'>Sayı {k}</div><div style='font-size:10px; color:#64748b; font-weight:bold; margin-bottom:3px;'>Son 10 Çekilişte</div><div style='font-size:16px; color:#dc2626; font-weight:900;'>{v} Kez</div></div>"
+                        alevler_html += "</div>"
+                        st.markdown(alevler_html, unsafe_allow_html=True)
+                    else: st.info("Son 10 çekilişte çıldıran sayı yok.")
+                    
+                with col_rad2:
+                    st.markdown("#### 💤 UYUYAN DEVLER (Kuluçka)")
+                    if uyuyan_devler:
+                        uyuyan_html = "<div style='display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
+                        for k, v in sorted(uyuyan_devler.items(), key=lambda item: item[1], reverse=True):
+                            uyuyan_html += f"<div style='background-color:#f0f9ff; border:1px solid #bae6fd; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;'><strong style='color:#0369a1; font-size:13px;'>Sayı {k}</strong><span style='font-size:12px; color:#64748b; font-weight:bold;'>{v} Çekiliştir Yok</span></div>"
+                        uyuyan_html += "</div>"
+                        st.markdown(uyuyan_html, unsafe_allow_html=True)
+                    else: st.info("Uyuyan dev bulunmuyor.")
+
+                st.markdown("---")
+                st.markdown("<h4 style='color:#e61532;'>🧬 ÇAPRAZ GEÇİŞ ANALİZİ (MARKOV MATRİSİ)</h4>", unsafe_allow_html=True)
+                
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0ea5e9; padding: 12px 15px; margin-bottom: 15px; border-radius: 4px; color: #334155; font-size: 0.90rem; line-height: 1.5;'>
+                    Frekansları seçin; <b>Yapay Zeka motoru</b> sizin için bu frekansın tarihte kaç kez yaşandığını, bu frekans geldiğinde <b>tek/çift</b> yüzdesini, <b>kök eşleşme</b> (rakamların sonu aynı olan sayılar örn: 15-25), önceki haftadan <b>devir</b> yüzdelerini, <b>ardışık, basamak ve alt/üst bölge</b> yüzdelerini sizin için hesaplasın.
                 </div>
                 """, unsafe_allow_html=True)
-            else:
-                st.info("Şans Topu tarihinde henüz hiçbir sayı 3 hafta üst üste çıkmamıştır.")
-        with tab_sorgu:
-            st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU</h3>", unsafe_allow_html=True)
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #8b5cf6; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.10rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
-                Makinenin sinir uçlarına bağlanın. Veritabanındaki en popüler şablonları inceleyin ve kendi belirlediğiniz frekans senaryosunun ardından yaşanacakları simüle edin.
-Örneğin son çekilişteki frekans aralıklarını altta belirtin ve bu frekans aralığından sonra gelen tüm istatistikleri inceleyin
-            </div>
-            """, unsafe_allow_html=True)
-
-            # 1. Popüler Frekanslar
-            all_freqs = [get_f_pattern(d) for d in valid_draws]
-            freq_counts = Counter(all_freqs)
-            
-            st.markdown("#### 📊 VERİTABANINDAKİ EN POPÜLER FREKANS ŞABLONLARI")
-            pop_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-bottom:30px;'>"
-            for f, c in freq_counts.most_common(5):
-                pop_html += f"<div style='background-color:#ffffff; border:2px solid #cbd5e1; padding:10px 15px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05); text-align:center;'><b>{f}</b><br><span style='color:#db2777; font-weight:900; font-size:14px;'>{c} Kez Yaşandı</span></div>"
-            pop_html += "</div>"
-            st.markdown(pop_html, unsafe_allow_html=True)
-
-            # 2. İnteraktif Sorgu Alanı
-            st.markdown("#### 🔍 HEDEF FREKANSI BELİRLEYİN")
-            cq1, cq2, cq3 = st.columns(3)
-            with cq1:
-                st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
-                q_s = st.number_input("Sıcak", 0, 5, 2, key="q_s", label_visibility="collapsed")
-            with cq2:
-                st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
-                q_o = st.number_input("Orta", 0, 5, 2, key="q_o", label_visibility="collapsed")
-            with cq3:
-                st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
-                q_c = st.number_input("Soğuk", 0, 5, 1, key="q_c", label_visibility="collapsed")
                 
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            # SORGULA BUTONU
-            if st.button("🚀 DİNAMİK İSTİHBARATI GETİR", type="primary", use_container_width=True):
-                if q_s + q_o + q_c != 5:
-                    st.error("⚠️ HATA: Sıcak, Orta ve Soğuk sayılarının toplamı tam 5 olmalıdır!")
+                st.markdown(f"""
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
+                    <div style="flex: 1; background-color: #fff5f5; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #c53030; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔥 SICAK (≥28): {len(hot_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #742a2a; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(hot_nums)))}</p>
+                    </div>
+                    <div style="flex: 1; background-color: #ebf8ff; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #2b6cb0; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔵 ORTA (20-27): {len(medium_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #2c5282; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(medium_nums)))}</p>
+                    </div>
+                    <div style="flex: 1; background-color: #fefbeb; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #b7791f; font-size: 0.90rem; display: block; margin-bottom: 5px;">❄️ SOĞUK (≤19): {len(cold_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #744210; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(cold_nums)))}</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                last_s = sum(1 for x in valid_draws[0] if x in hot_nums)
+                last_o = sum(1 for x in valid_draws[0] if x in medium_nums)
+                last_c = sum(1 for x in valid_draws[0] if x in cold_nums)
+                
+                st.markdown("""
+                <div style='border: 3px solid #000000; border-radius: 10px; padding: 20px; background-color: #f8fafc; margin-bottom: 20px; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.1);'>
+                    <h4 style='text-align: center; color: #0f172a; font-weight: 900; margin-top: 0; margin-bottom: 20px; letter-spacing: 0.5px;'>🎯 HEDEF FREKANS KOMBİNASYONUNU SEÇİN</h4>
+                """, unsafe_allow_html=True)
+                
+                cc1, cc2, cc3 = st.columns(3)
+                with cc1:
+                    st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
+                    target_s = st.number_input("Sıcak (S)", 0, 5, last_s, key="ts_m", label_visibility="collapsed")
+                with cc2:
+                    st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
+                    target_o = st.number_input("Orta (O)", 0, 5, last_o, key="to_m", label_visibility="collapsed")
+                with cc3:
+                    st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
+                    target_c = st.number_input("Soğuk (C)", 0, 5, last_c, key="tc_m", label_visibility="collapsed")
+                    
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                if target_s + target_o + target_c != 5:
+                    st.warning("⚠️ Sıcak, Orta ve Soğuk sayılarının toplamı tam 5 olmalıdır!")
                 else:
-                    target_f_str = f"{q_s}S - {q_o}O - {q_c}C"
-                    q_results = {'oe': [], 'cons': [], 'root': [], 'basamak': [], 'alt_ust': [], 'devir': []}
-                    match_count = 0
-                    
+                    target_freq = f"{target_s}S - {target_o}O - {target_c}C"
+                    t_draws = []
                     for i in range(1, len(valid_draws)):
-                        if get_f_pattern(valid_draws[i]) == target_f_str:
-                            match_count += 1
-                            trigger_draw = valid_draws[i]
-                            next_draw = valid_draws[i-1]
-                            
-                            q_results['oe'].append(get_tc(next_draw))
-                            q_results['cons'].append(get_ard(next_draw))
-                            q_results['root'].append(get_k(next_draw))
-                            q_results['basamak'].append(get_basamak_pattern(next_draw))
-                            q_results['alt_ust'].append(get_bolge_pattern_sans(next_draw))
-                            q_results['devir'].append(get_dev(trigger_draw, next_draw))
-                    
-                    if match_count == 0:
-                        st.warning(f"Veritabanında '{target_f_str}' frekansının gelip de ardından çekiliş yapılan bir kayıt bulunamadı.")
-                    else:
-                        st.success(f"✅ HEDEF KİLİTLENDİ: Tarihte '{target_f_str}' şablonundan SONRAKİ HAFTA tam {match_count} kez çekiliş yapılmıştır. Makinenin gösterdiği refleksler aşağıdadır:")
+                        if get_f_pattern(valid_draws[i]) == target_freq:
+                            next_d = valid_draws[i-1]
+                            t_draws.append({
+                                'tc': get_tc(next_d), 'ard': get_ard(next_d), 'kok': get_k(next_d),
+                                'dev': get_dev(valid_draws[i], next_d), 'bas': get_basamak_pattern(next_d),
+                                'bolge': get_bolge_pattern_sans(next_d)
+                            })
+
+                    if len(t_draws) > 0:
+                        st.info(f"**Seçilen Şablon:** {target_freq} | Tarihte bu şablondan sonra **{len(t_draws)}** kez çekiliş yapılmış:")
+                        tc_c = Counter([x['tc'] for x in t_draws])
+                        ard_c = Counter([x['ard'] for x in t_draws])
+                        kok_c = Counter([x['kok'] for x in t_draws])
+                        dev_c = Counter([x['dev'] for x in t_draws])
+                        bas_c = Counter([x['bas'] for x in t_draws])
+                        bolge_c = Counter([x['bolge'] for x in t_draws])
                         
-                        def print_q_stats(data_list, title):
-                            c = Counter(data_list)
-                            total = len(data_list)
-                            html = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; margin-bottom:15px; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>"
-                            html += f"<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
-                            for k, v in c.most_common():
-                                perc = (v / total) * 100
-                                html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px dashed #f1f5f9; padding-bottom:4px;'><span style='font-weight:bold; color:#334155; font-size:14px;'>{k}</span> <span style='color:#db2777; font-weight:900; font-size:15px;'>%{perc:.2f}</span></div>"
-                            html += "</div>"
-                            return html
+                        def format_pct(counter):
+                            total = sum(counter.values())
+                            return "\n".join([f"- {k}: %{round((v/total)*100, 2)}" for k, v in counter.most_common()])
+                        
+                        copy_text = f"🎯 ÇAPRAZ ANALİZ ÇIKTISI (BAZ FREKANS: {target_freq} - {len(t_draws)} Kez Yaşandı)\n\n--- 1. TEK/ÇİFT REFLEKSİ ---\n{format_pct(tc_c)}\n\n--- 2. ARDIŞIK REFLEKSİ ---\n{format_pct(ard_c)}\n\n--- 3. KÖK EŞLEŞMESİ REFLEKSİ ---\n{format_pct(kok_c)}\n\n--- 4. DEVİR REFLEKSİ ---\n{format_pct(dev_c)}\n\n--- 5. BASAMAK REFLEKSİ ---\n{format_pct(bas_c)}\n\n--- 6. BÖLGE REFLEKSİ (Alt-Üst) ---\n{format_pct(bolge_c)}"
+                        
+                        st.markdown(f'''
+                        <div style="background-color: #ffffff; padding: 20px; border: 2px solid #000000; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                            <pre style="color: #000000; font-weight: 800; font-size: 15px; font-family: Consolas, monospace; background: transparent; border: none; margin: 0; padding: 0;">{copy_text}</pre>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    else:
+                        st.warning(f"Tarihte daha önce {target_freq} şablonu yaşanıp ardından çekiliş yapılmamış.")
 
-                        qc1, qc2, qc3 = st.columns(3)
-                        with qc1:
-                            st.markdown(print_q_stats(q_results['oe'], "1. TEK/ÇİFT REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['root'], "4. KÖK EŞLEŞME REFLEKSİ"), unsafe_allow_html=True)
-                        with qc2:
-                            st.markdown(print_q_stats(q_results['alt_ust'], "2. BÖLGE (ALT/ÜST) REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['devir'], "5. DEVİR REFLEKSİ"), unsafe_allow_html=True)
-                        with qc3:
-                            st.markdown(print_q_stats(q_results['cons'], "3. ARDIŞIK SAYI REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['basamak'], "6. BASAMAK DAĞILIMI"), unsafe_allow_html=True)
+            with tab_simulasyon:
+                st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🎯 GELECEK HAFTA PROJEKSİYONU (YAPAY ZEKA TAHMİNİ)</h3>", unsafe_allow_html=True)
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #0ea5e9; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.15rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                    Bu motor, son çekilişin 7 farklı DNA özelliğini alır, oyunun tüm geçmişini tarar ve tarihte bu özelliklerden sonra en yüksek ihtimalle nelerin geldiğini hesaplar.
+                </div>
+                """, unsafe_allow_html=True)
+                
+                history_sim = []
+                for i in range(len(valid_draws)):
+                    d = valid_draws[i]
+                    dev_durum = "Bilinmiyor"
+                    if i + 1 < len(valid_draws):
+                        dev_durum = get_dev(valid_draws[i+1], d)
+                    
+                    history_sim.append({
+                        'freq': get_f_pattern(d),
+                        'oe': get_tc(d),
+                        'cons': get_ard(d),
+                        'root': get_k(d),
+                        'basamak': get_basamak_pattern(d),
+                        'alt_ust': get_bolge_pattern_sans(d),
+                        'devir': dev_durum
+                    })
+                
+                last_sim = history_sim[0] 
+                
+                def render_transition(prop_key, target_val, title):
+                    next_states = []
+                    for i in range(1, len(history_sim)):
+                        if history_sim[i][prop_key] == target_val:
+                            next_states.append(history_sim[i-1][prop_key])
+                    
+                    html_str = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); height:100%;'>"
+                    html_str += f"<h5 style='color:#0f172a; font-weight:900; font-size:15px; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
+                    html_str += f"<p style='font-size:12px; color:#64748b; margin-bottom:10px;'>Son Çekiliş: <b style='color:#db2777;'>{target_val}</b></p>"
+                    
+                    if not next_states:
+                        html_str += "<span style='color:#64748b; font-size:13px;'>Tarihte örnek bulunamadı.</span></div>"
+                        return html_str
+                    
+                    c = Counter(next_states)
+                    total = len(next_states)
+                    html_str += "<ul style='margin-bottom:0; padding-left:20px; font-size:14px;'>"
+                    for k, v in c.most_common(3): 
+                        pct = (v/total)*100
+                        html_str += f"<li style='margin-bottom:5px;'><b>%{pct:.1f}</b> ihtimalle <span style='color:#db2777; font-weight:bold;'>{k}</span></li>"
+                    html_str += "</ul></div>"
+                    return html_str
+
+                st.markdown(f"<h5 style='color:#db2777; margin-bottom:15px;'>🔍 SON ÇEKİLİŞ ({valid_draws[0]}) BAZ ALINARAK YAPILAN MARKOV HESAPLAMALARI:</h5>", unsafe_allow_html=True)
+                
+                sc1, sc2, sc3 = st.columns(3)
+                with sc1:
+                    st.markdown(render_transition('freq', last_sim['freq'], "1. Frekans Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('basamak', last_sim['basamak'], "4. Basamak Radarı"), unsafe_allow_html=True)
+                with sc2:
+                    st.markdown(render_transition('alt_ust', last_sim['alt_ust'], "2. Alt/Üst Bölge Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('cons', last_sim['cons'], "5. Ardışık Sayı Radarı"), unsafe_allow_html=True)
+                with sc3:
+                    st.markdown(render_transition('oe', last_sim['oe'], "3. Tek/Çift Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('root', last_sim['root'], "6. Kök Eşleşme Radarı"), unsafe_allow_html=True)
+                    
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(render_transition('devir', last_sim['devir'], "7. Devir (Geçen Haftadan) Radarı"), unsafe_allow_html=True)
+                
+                st.markdown("<hr style='border: 2px dashed #cbd5e1; margin: 25px 0;'>", unsafe_allow_html=True)
+                st.markdown("#### 🚨 KRİTİK İSTİHBARAT: 'SAYI KESİLME' ALGORİTMASI")
+                
+                streak_3_count = 0
+                streak_4_count = 0
+                for num in range(1, 35):
+                    for i in range(3, len(valid_draws)):
+                        if num in valid_draws[i] and num in valid_draws[i-1] and num in valid_draws[i-2]:
+                            streak_3_count += 1
+                            if num in valid_draws[i-3]:
+                                streak_4_count += 1
+                                
+                if streak_3_count > 0:
+                    perc_devam = (streak_4_count / streak_3_count) * 100
+                    perc_kesilme = 100 - perc_devam
+                    st.markdown(f"""
+                    <div style='background-color: #fff1f2; border: 2px solid #ef4444; padding: 15px; border-radius: 8px; color: #7f1d1d;'>
+                        Şans Topu tarihinde herhangi bir sayının <b>3 hafta ÜST ÜSTE çıkma durumu tam {streak_3_count} kez</b> yaşanmıştır.<br><br>
+                        Algoritmanın tespitine göre, 3 hafta üst üste çıkan bir sayının <b>4. HAFTA KESİN OLARAK KESİLME (GELMEME) ihtimali: <span style='font-size:22px; font-weight:900;'>%{perc_kesilme:.2f}</span></b>'dir.<br>
+                        <span style='font-size:14px; color:#991b1b;'><i>(Kupon yaparken, son 3 haftadır çıkan bir sayı varsa onu <b>%{perc_kesilme:.2f} matematiksel güvence ile</b> eleyebilirsiniz.)</i></span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("Şans Topu tarihinde henüz hiçbir sayı 3 hafta üst üste çıkmamıştır.")
+
+            with tab_sorgu:
+                st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU</h3>", unsafe_allow_html=True)
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #8b5cf6; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.10rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                    Makinenin sinir uçlarına bağlanın. Veritabanındaki en popüler şablonları inceleyin ve kendi belirlediğiniz frekans senaryosunun ardından yaşanacakları simüle edin.
+                </div>
+                """, unsafe_allow_html=True)
+
+                all_freqs = [get_f_pattern(d) for d in valid_draws]
+                freq_counts = Counter(all_freqs)
+                
+                st.markdown("#### 📊 VERİTABANINDAKİ EN POPÜLER FREKANS ŞABLONLARI")
+                pop_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-bottom:30px;'>"
+                for f, c in freq_counts.most_common(5):
+                    pop_html += f"<div style='background-color:#ffffff; border:2px solid #cbd5e1; padding:10px 15px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05); text-align:center;'><b>{f}</b><br><span style='color:#db2777; font-weight:900; font-size:14px;'>{c} Kez Yaşandı</span></div>"
+                pop_html += "</div>"
+                st.markdown(pop_html, unsafe_allow_html=True)
+
+                st.markdown("#### 🔍 HEDEF FREKANSI BELİRLEYİN")
+                cq1, cq2, cq3 = st.columns(3)
+                with cq1:
+                    st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
+                    q_s = st.number_input("Sıcak", 0, 5, 2, key="q_s", label_visibility="collapsed")
+                with cq2:
+                    st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
+                    q_o = st.number_input("Orta", 0, 5, 2, key="q_o", label_visibility="collapsed")
+                with cq3:
+                    st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
+                    q_c = st.number_input("Soğuk", 0, 5, 1, key="q_c", label_visibility="collapsed")
+                    
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if st.button("🚀 DİNAMİK İSTİHBARATI GETİR", type="primary", use_container_width=True):
+                    if q_s + q_o + q_c != 5:
+                        st.error("⚠️ HATA: Sıcak, Orta ve Soğuk sayılarının toplamı tam 5 olmalıdır!")
+                    else:
+                        target_f_str = f"{q_s}S - {q_o}O - {q_c}C"
+                        q_results = {'oe': [], 'cons': [], 'root': [], 'basamak': [], 'alt_ust': [], 'devir': []}
+                        match_count = 0
+                        
+                        for i in range(1, len(valid_draws)):
+                            if get_f_pattern(valid_draws[i]) == target_f_str:
+                                match_count += 1
+                                trigger_draw = valid_draws[i]
+                                next_draw = valid_draws[i-1]
+                                
+                                q_results['oe'].append(get_tc(next_draw))
+                                q_results['cons'].append(get_ard(next_draw))
+                                q_results['root'].append(get_k(next_draw))
+                                q_results['basamak'].append(get_basamak_pattern(next_draw))
+                                q_results['alt_ust'].append(get_bolge_pattern_sans(next_draw))
+                                q_results['devir'].append(get_dev(trigger_draw, next_draw))
+                        
+                        if match_count == 0:
+                            st.warning(f"Veritabanında '{target_f_str}' frekansının gelip de ardından çekiliş yapılan bir kayıt bulunamadı.")
+                        else:
+                            st.success(f"✅ HEDEF KİLİTLENDİ: Tarihte '{target_f_str}' şablonundan SONRAKİ HAFTA tam {match_count} kez çekiliş yapılmıştır. Makinenin gösterdiği refleksler aşağıdadır:")
                             
-                        st.info("💡 KAPTAN'A NOT: En yüksek yüzdeler, makinenin bu frekansa verdiği tepkidir. Kolonları kurarken en üst sıradaki şablonları baz al.")
-# --- SAYFA SONU (ALT) ÜRETİM BUTONU ---
-        st.markdown("<br><hr style='border: 2px dashed #cbd5e1; margin-top: 30px; margin-bottom: 20px;'>", unsafe_allow_html=True)
-        
-        if not st.session_state.uretim_ekrani_acik:
-            st.markdown("<p style='text-align: center; color: #64748b; font-size:15px; font-weight:bold; margin-bottom:15px;'>Tüm analizleri incelediyseniz motoru ateşleyebilirsiniz 👇</p>", unsafe_allow_html=True)
-            c_alt_sol, c_alt_orta, c_alt_sag = st.columns([1, 2, 1])
-            with c_alt_orta:
-                # Butonun hata vermemesi için özel 'key' atandı
-                if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", type="primary", use_container_width=True, key="alt_uretim_btn_sans_topu"):
-                    st.session_state.uretim_ekrani_acik = True
-                    st.rerun()
+                            def print_q_stats(data_list, title):
+                                c = Counter(data_list)
+                                total = len(data_list)
+                                html = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; margin-bottom:15px; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>"
+                                html += f"<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
+                                for k, v in c.most_common():
+                                    perc = (v / total) * 100
+                                    html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px dashed #f1f5f9; padding-bottom:4px;'><span style='font-weight:bold; color:#334155; font-size:14px;'>{k}</span> <span style='color:#db2777; font-weight:900; font-size:15px;'>%{perc:.2f}</span></div>"
+                                html += "</div>"
+                                return html
 
+                            qc1, qc2, qc3 = st.columns(3)
+                            with qc1:
+                                st.markdown(print_q_stats(q_results['oe'], "1. TEK/ÇİFT REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['root'], "4. KÖK EŞLEŞME REFLEKSİ"), unsafe_allow_html=True)
+                            with qc2:
+                                st.markdown(print_q_stats(q_results['alt_ust'], "2. BÖLGE (ALT/ÜST) REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['devir'], "5. DEVİR REFLEKSİ"), unsafe_allow_html=True)
+                            with qc3:
+                                st.markdown(print_q_stats(q_results['cons'], "3. ARDIŞIK SAYI REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['basamak'], "6. BASAMAK DAĞILIMI"), unsafe_allow_html=True)
+                                
+                            st.info("💡 KAPTAN'A NOT: En yüksek yüzdeler, makinenin bu frekansa verdiği tepkidir. Kolonları kurarken en üst sıradaki şablonları baz al.")
+            
 # ==========================================
 # 🔵 2. MODÜL: SÜPER LOTO
 # ==========================================
@@ -2491,12 +3173,9 @@ elif selected_game == "SÜPER LOTO AI":
             v_draws = []
             for index, row in df.iterrows():
                 try:
-                    # Satırdaki metinleri/boşlukları yut, sadece rakamları çıkar
                     clean_row = pd.to_numeric(row, errors='coerce').dropna().astype(int).tolist()
-                    # Sadece 1 ile 60 arasındaki geçerli Süper Loto sayılarını süz
                     clean_nums = [x for x in clean_row if 1 <= x <= 60]
                     clean_unique = list(set(clean_nums))
-                    # Eğer elde temiz 6 sayı kaldıysa, çekiliş geçerlidir
                     if len(clean_unique) >= 6:
                         v_draws.append(sorted(clean_unique[:6]))
                 except:
@@ -2534,7 +3213,7 @@ elif selected_game == "SÜPER LOTO AI":
 <li>📉 <b>Çan Eğrisi:</b> Seçilen 6 sayının toplamının, oyunun matematiksel kalbi olan <b>183</b> eksenine oturup oturmadığını ölçer.</li>
 </ul>
 <div style='background-color:#ecfdf5; padding:12px; border-left:5px solid #059669; margin-top:15px; border-radius: 4px;'>
-<strong>💡 Strateji Önerisi:</strong> Sol menüden kurallarını mantıklı bir çerçevede kur. Motoru ateşle! Filtreleri aşan o yegâne kolona ulaşana kadar denemeye devam et.
+<strong>💡 Strateji Önerisi:</strong> Sol menüden kurallarını mantıklı bir çerçevede kur. Motoru ateşle! Seçtiğin 6'lı kurallar havuzdaki sayılarla çelişiyorsa makine paradoksa girer. Tüm devasa filtreleri aşan yegâne kolona ulaşana kadar denemeye devam et.
 </div>
 </div>
 </details>
@@ -2593,18 +3272,31 @@ elif selected_game == "SÜPER LOTO AI":
         def is_enemy(n1, n2):
             return (min(n1, n2), max(n1, n2)) in enemies
 
-        st.sidebar.markdown("## ⚙️ SÜPER LOTO FİLTRELERİ")
+        st.sidebar.markdown("## ⚙️ SÜPER LOTO FİLTRELERİ (Hibrit Zırh)")
 
-        with st.sidebar.expander("📊 0. Temel Frekans", expanded=True):
-            sc1, sc2, sc3 = st.columns(3)
-            s_hedef = sc1.number_input("Sıcak", 0, 6, 2, key="sl_s")
-            o_hedef = sc2.number_input("Orta", 0, 6, 3, key="sl_o")
-            c_hedef = sc3.number_input("Soğuk", 0, 6, 1, key="sl_c")
+        with st.sidebar.expander("📊 Temel Frekans", expanded=True):
+            f_map = {
+                "Dengeli: 2 Sıcak - 2 Orta - 2 Soğuk": (2, 2, 2),
+                "Altın Oran: 2 Sıcak - 3 Orta - 1 Soğuk": (2, 3, 1),
+                "Altın Oran: 3 Sıcak - 2 Orta - 1 Soğuk": (3, 2, 1),
+                "Orta Ağırlıklı: 1 Sıcak - 3 Orta - 2 Soğuk": (1, 3, 2),
+                "Sıcak Ağırlıklı: 3 Sıcak - 1 Orta - 2 Soğuk": (3, 1, 2),
+                "Soğuk Ağırlıklı: 2 Sıcak - 1 Orta - 3 Soğuk": (2, 1, 3),
+                "Soğuk Ağırlıklı: 1 Sıcak - 2 Orta - 3 Soğuk": (1, 2, 3),
+                "Ekstrem Sıcak: 4 Sıcak - 1 Orta - 1 Soğuk": (4, 1, 1),
+                "Ekstrem Orta: 1 Sıcak - 4 Orta - 1 Soğuk": (1, 4, 1),
+                "Ekstrem Soğuk: 1 Sıcak - 1 Orta - 4 Soğuk": (1, 1, 4),
+                "Full Sıcak: 6 Sıcak - 0 Orta - 0 Soğuk": (6, 0, 0),
+                "Full Orta: 0 Sıcak - 6 Orta - 0 Soğuk": (0, 6, 0),
+                "Full Soğuk: 0 Sıcak - 0 Orta - 6 Soğuk": (0, 0, 6)
+            }
+            frekans_secim = st.selectbox("Sıcak - Orta - Soğuk Dağılımı", list(f_map.keys()), key="sl_frekans")
+            sicak_hedef, orta_hedef, soguk_hedef = f_map[frekans_secim]
 
         with st.sidebar.expander("1. Tek/Çift Refleksi", expanded=True):
-            tc1, tc2 = st.columns(2)
-            tek_hedef = tc1.number_input("Tek", 0, 6, 3, key="sl_t")
-            cift_hedef = tc2.number_input("Çift", 0, 6, 3, key="sl_ct")
+            tek_hedef = st.slider("Tek Sayı Adedi (Kalanı Çift Olur)", 0, 6, 3, key="sl_t")
+            cift_hedef = 6 - tek_hedef
+            st.info(f"Sistem Kilitlendi: {tek_hedef} Tek, {cift_hedef} Çift")
 
         with st.sidebar.expander("2. Ardışık & 3. Kök Refleksi", expanded=True):
             c_strat1, c_strat2 = st.columns(2)
@@ -2613,7 +3305,6 @@ elif selected_game == "SÜPER LOTO AI":
 
         with st.sidebar.expander("4. Devir Refleksi", expanded=True):
             devir_secimi = st.selectbox("Devir (Önceki Haftadan)", [
-                "Farketmez", 
                 "YOK (Önceki haftadan sayı gelmesin)", 
                 "VAR (Sistem rastgele 1 sayı seçsin)", 
                 "VAR (Sayıyı ben seçeceğim)"
@@ -2629,6 +3320,9 @@ elif selected_game == "SÜPER LOTO AI":
             bolge1 = bc1.number_input("Alt (1-20)", 0, 6, 2, key="sl_b1")
             bolge2 = bc2.number_input("Orta (21-40)", 0, 6, 2, key="sl_b2")
             bolge3 = bc3.number_input("Üst (41-60)", 0, 6, 2, key="sl_b3")
+            
+            if (bolge1 + bolge2 + bolge3) != 6:
+                st.error(f"🚨 HATA: Bölge toplamı 6 olmalı! (Şu anki toplam: {bolge1 + bolge2 + bolge3})")
 
         with st.sidebar.expander("🛡️ Ekstra Kısıtlamalar (Çan vb.)", expanded=False):
             min_toplam, max_toplam = st.slider("Çan Eğrisi (Toplam)", 21, 345, (120, 240), key="sl_can")
@@ -2667,81 +3361,179 @@ elif selected_game == "SÜPER LOTO AI":
             elif counts == [2, 1, 1, 1, 1]: return "1 Çift Kök"
             else: return "Çoklu/Çifte Kök"
 
-        # --- ÜRETİM ALANI (EN ÜSTTE VE ORTADA) ---
+        # --- ÜRETİM ALANI (SİHİRLİ BUTON VE MANUEL SEÇİM) ---
         st.info(f"{msg} | **Son Çekiliş:** {valid_draws[0]}")
         st.markdown("---")
 
         if "sl_uretim_ekrani_acik" not in st.session_state:
             st.session_state.sl_uretim_ekrani_acik = False
+        if "sl_ai_uretim_ekrani_acik" not in st.session_state:
+            st.session_state.sl_ai_uretim_ekrani_acik = False
+            
+        if "sl_manuel_sayaci" not in st.session_state:
+            st.session_state.sl_manuel_sayaci = 0
+        if "sl_ai_sayaci" not in st.session_state:
+            st.session_state.sl_ai_sayaci = 0
 
         sl_basla_btn = False
+        sl_ai_basla_btn = False
         sl_kolon_sayisi = 1
-
-        if not st.session_state.sl_uretim_ekrani_acik:
-            c_btn_sol, c_btn_orta, c_btn_sag = st.columns([1, 2, 1])
-            with c_btn_orta:
-                if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", type="primary", use_container_width=True, key="sl_btn_1"):
-                    st.session_state.sl_uretim_ekrani_acik = True
-                    st.rerun() 
         
-        if st.session_state.sl_uretim_ekrani_acik:
-            st.markdown("""
-                <div style='border: 3px solid #1e3a8a; border-radius: 12px; padding: 20px; background-color: #f8fafc; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.15); margin-bottom: 20px;'>
-                    <h3 style='color: #1e3a8a; margin-top: 0; font-weight: 900; text-align: center; letter-spacing: 1px;'>🤖 KUSURSUZ ÜRETİM ONAYI</h3>
-                    <p style='color: #334155; text-align: center; font-size: 16px; font-weight: 600; margin-bottom: 0px;'>Yapay Zeka'nın sizin için kaç adet Süper Loto kolonu üretmesini istersiniz?</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
-            
-            with c_orta:
-                st.markdown("<div style='background-color:#1e3a8a; border:2px solid #0f172a; padding:10px; border-radius:8px; text-align:center; font-weight:900; color:#ffffff; font-size:16px; margin-bottom:5px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); letter-spacing: 1px;'>🔢 KOLON ADEDİ SEÇİN</div>", unsafe_allow_html=True)
-                sl_kolon_sayisi = st.number_input("Kolon Adedi", min_value=1, max_value=10, value=1, label_visibility="collapsed", key="sl_kolon_adet")
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                sl_basla_btn = st.button("✅ MOTORU ATEŞLE VE ÜRET", type="primary", use_container_width=True, key="sl_btn_basla")
-            with col_btn2:
-                iptal_btn = st.button("❌ İPTAL", use_container_width=True, key="sl_btn_iptal")
-                
-            if iptal_btn:
-                st.session_state.sl_uretim_ekrani_acik = False
-                st.rerun()
+        is_vip_or_admin = st.session_state.get("is_vip", False) or st.session_state.get("user_email", "") == "admin@kaptan.com"
 
-        if sl_basla_btn:
+        manuel_hakkini_doldurdu = not is_vip_or_admin and st.session_state.sl_manuel_sayaci >= 1
+        ai_hakkini_doldurdu = not is_vip_or_admin and st.session_state.sl_ai_sayaci >= 1
+
+        if not st.session_state.sl_uretim_ekrani_acik and not st.session_state.sl_ai_uretim_ekrani_acik:
+            if manuel_hakkini_doldurdu and ai_hakkini_doldurdu:
+                st.error("🔒 Ücretsiz deneme haklarınızı doldurdunuz! Sınırsız üretim yapmak ve tüm kuantum filtrelerini özgürce kullanmak için VIP üyeliğe geçin.")
+                if st.button("👑 VIP ÜYELİK AYRICALIKLARI", use_container_width=True):
+                    pass
+            else:
+                st.markdown("<h4 style='text-align:center; color:#1e293b; font-weight:900;'>Kuponunuzu Nasıl Üretmek İstersiniz?</h4>", unsafe_allow_html=True)
+                c_btn_sol, c_btn_sag = st.columns(2)
+                
+                with c_btn_sol:
+                    st.markdown("""
+                    <div style='background-color:#f1f5f9; padding:15px; border-radius:8px; border:2px solid #cbd5e1; text-align:center; margin-bottom:10px;'>
+                        <h5 style='color:#334155; margin-top:0;'>🎛️ MANUEL FİLTRELERLE</h5>
+                        <p style='font-size:12px; color:#64748b; margin-bottom:0;'>Sol menüdeki kendi belirlediğiniz kurallara sadık kalarak üretim yapar.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if manuel_hakkini_doldurdu:
+                        st.warning("🔒 Manuel üretim hakkınızı kullandınız.")
+                    else:
+                        if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", use_container_width=True, key="btn_manuel_sl"):
+                            st.session_state.sl_uretim_ekrani_acik = True
+                            st.rerun()
+                        
+                with c_btn_sag:
+                    st.markdown("""
+                    <div style='background-color:#ecfdf5; padding:15px; border-radius:8px; border:2px solid #059669; text-align:center; margin-bottom:10px;'>
+                        <h5 style='color:#059669; margin-top:0; font-weight:900;'>🪄 YAPAY ZEKAYA DEVRET</h5>
+                        <p style='font-size:12px; color:#064e3b; margin-bottom:0;'>Filtrelerle uğraşmayın! Makine tüm geçmişi tarayıp en ideal altın oranlı kuponu bulsun.</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if ai_hakkini_doldurdu:
+                        st.warning("🔒 Sihirli Oto-Pilot hakkınızı kullandınız.")
+                    else:
+                        if st.button("✨ SİHİRLİ OTOPİLOT İLE ÜRET", type="primary", use_container_width=True, key="btn_ai_sl"):
+                            st.session_state.sl_ai_uretim_ekrani_acik = True
+                            st.rerun()
+
+        # 1. MANUEL ÜRETİM ONAY EKRANI
+        if st.session_state.sl_uretim_ekrani_acik:
+            st.markdown("<div style='border: 3px solid #64748b; border-radius: 12px; padding: 20px; background-color: #f8fafc; text-align: center; margin-bottom: 20px;'><h3 style='color: #334155; margin-top: 0;'>🎛️ MANUEL ÜRETİM ONAYI</h3><p style='margin-bottom:0;'>Süper Loto kolon adedini belirleyin.</p></div>", unsafe_allow_html=True)
+            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
+            with c_orta:
+                max_kolon_hakki = 100 if is_vip_or_admin else 3
+                sl_kolon_sayisi = st.number_input(f"Kolon Adedi (Maksimum {max_kolon_hakki})", min_value=1, max_value=max_kolon_hakki, value=1, key="manuel_adet_sl")
+                if not is_vip_or_admin:
+                    st.info("💡 Ziyaretçiler ve Standart üyeler manuel olarak en fazla 3 kolon üretebilir. Sınırsız üretim için VIP'ye geçin.")
+                
+                col_m1, col_m2 = st.columns(2)
+                with col_m1: sl_basla_btn = st.button("✅ ÜRET", type="primary", use_container_width=True, key="sl_basla_m")
+                with col_m2: 
+                    if st.button("❌ İPTAL", use_container_width=True, key="iptal_m_sl"):
+                        st.session_state.sl_uretim_ekrani_acik = False
+                        st.rerun()
+
+        # 2. SİHİRLİ YAPAY ZEKA ONAY EKRANI
+        if st.session_state.sl_ai_uretim_ekrani_acik:
+            st.markdown("<div style='border: 3px solid #059669; border-radius: 12px; padding: 20px; background-color: #ecfdf5; text-align: center; margin-bottom: 20px;'><h3 style='color: #059669; margin-top: 0;'>🪄 YAPAY ZEKA OTO-PİLOT ONAYI</h3><p style='margin-bottom:0;'>Makine Süper Loto DNA'sını sizin için optimize edecek.</p></div>", unsafe_allow_html=True)
+            c_bos1, c_orta, c_bos2 = st.columns([1, 1.5, 1])
+            with c_orta:
+                max_ai_hakki = 100 if is_vip_or_admin else 1
+                sl_kolon_sayisi = st.number_input(f"Kolon Adedi (Maksimum {max_ai_hakki})", min_value=1, max_value=max_ai_hakki, value=1, key="ai_adet_sl")
+                if not is_vip_or_admin:
+                    st.warning("👑 Sihirli buton ziyaretçiler için 1 kolonla sınırlıdır. Tüm kuponu yapay zekaya doldurtmak için VIP'ye geçin.")
+                
+                col_a1, col_a2 = st.columns(2)
+                with col_a1: sl_ai_basla_btn = st.button("✨ SİHRİ BAŞLAT", type="primary", use_container_width=True, key="sl_basla_ai")
+                with col_a2: 
+                    if st.button("❌ İPTAL", use_container_width=True, key="iptal_a_sl"):
+                        st.session_state.sl_ai_uretim_ekrani_acik = False
+                        st.rerun()
+
+        # ÜRETİM MOTORU (HEM MANUEL HEM AI İÇİN ORTAK ÇALIŞIR)
+        if sl_basla_btn or sl_ai_basla_btn:
+            if not is_vip_or_admin:
+                if sl_basla_btn:
+                    st.session_state.sl_manuel_sayaci += 1
+                if sl_ai_basla_btn:
+                    st.session_state.sl_ai_sayaci += 1
+                    
             st.session_state.sl_uretim_ekrani_acik = False 
+            st.session_state.sl_ai_uretim_ekrani_acik = False
+            
             with st.spinner('Kuantum eleme motoru ve Yapay Zeka zırhı devrede...'):
-                time.sleep(0.5)
+                time.sleep(1)
                 
                 last_draw_nums = valid_draws[0]
                 devirler = []
                 ekstra_yasaklar = []
-                
-                if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
-                    ekstra_yasaklar.extend(last_draw_nums)
-                elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
-                    devirler = [int(x.strip()) for x in devir_sayisi_str.split(',') if x.strip().isdigit()]
-                
-                yasaklar_input = [int(x.strip()) for x in yasak_sayilar_str.split(',') if x.strip().isdigit()]
-                yasaklar = list(set(yasaklar_input + ekstra_yasaklar))
-                
-                bankolar = [int(x.strip()) for x in banko_sayilar_str.split(',') if x.strip().isdigit()]
-                sabit_sayilar = list(set(devirler + bankolar))
-                
+                yasaklar = []
+                sabit_sayilar = []
                 errors = []
-                if s_hedef + o_hedef + c_hedef != 6: errors.append("Sıcak+Orta+Soğuk = 6 olmalı.")
-                if tek_hedef + cift_hedef != 6: errors.append("Tek+Çift = 6 olmalı.")
-                if bolge1 + bolge2 + bolge3 != 6: errors.append("Alt+Orta+Üst Bölge toplamı 6 olmalı.")
-                if len(sabit_sayilar) > 6: errors.append("Banko ve Devir sayılarının toplamı 6'yı geçemez.")
-                for s in sabit_sayilar:
-                    if s in yasaklar: errors.append(f"Hata: {s} sayısı hem Banko/Devir hem de Yasaklı listesinde olamaz!")
                 
-                if devir_secimi == "VAR (Sayıyı ben seçeceğim)":
-                    for d in devirler:
-                        if d not in last_draw_nums:
-                            errors.append(f"Hata: Girdiğiniz '{d}' sayısı geçen haftanın çekilişinde yok! Lütfen geçerli bir devir sayısı girin: {last_draw_nums}")
+                # SİHİRLİ BUTON (AI) SEÇİLDİYSE KURALLARI MAKİNE KENDİ KOYAR
+                if sl_ai_basla_btn:
+                    aktif_havuz = hot_nums[:15] if len(hot_nums) >= 15 else hot_nums
+                    trend_devir_var_mi = any(x in hot_nums[:20] for x in last_draw_nums)
+                    devir_secimi = "VAR (Sistem rastgele 1 sayı seçsin)" if trend_devir_var_mi else "YOK (Önceki haftadan sayı gelmesin)"
+                    
+                    ai_tek = sum(1 for x in aktif_havuz if x % 2 != 0)
+                    ai_tek_orani = round((ai_tek / len(aktif_havuz)) * 6) if len(aktif_havuz) > 0 else 3
+                    tek_hedef = max(1, min(5, ai_tek_orani))
+                    cift_hedef = 6 - tek_hedef
+                    
+                    ai_b1 = sum(1 for x in aktif_havuz if 1 <= x <= 20)
+                    ai_b2 = sum(1 for x in aktif_havuz if 21 <= x <= 40)
+                    ai_b3 = sum(1 for x in aktif_havuz if 41 <= x <= 60)
+                    toplam_b = ai_b1 + ai_b2 + ai_b3
+                    
+                    if toplam_b > 0:
+                        bolge1 = round((ai_b1 / toplam_b) * 6)
+                        bolge2 = round((ai_b2 / toplam_b) * 6)
+                        bolge3 = 6 - (bolge1 + bolge2)
+                        if bolge1 < 0 or bolge2 < 0 or bolge3 < 0: bolge1, bolge2, bolge3 = 2, 2, 2
+                    else:
+                        bolge1, bolge2, bolge3 = 2, 2, 2
+                        
+                    ai_roots = [x % 10 for x in aktif_havuz]
+                    ai_root_counts = list(Counter(ai_roots).values())
+                    kese_koku = "VAR (1 Çift)" if any(c > 1 for c in ai_root_counts) else "YOK"
+                    
+                    sirali_aktif = sorted(aktif_havuz)
+                    has_hot_cons = any(sirali_aktif[i] + 1 == sirali_aktif[i+1] for i in range(len(sirali_aktif)-1))
+                    ardisik = "VAR" if has_hot_cons else "YOK"
+
+                    sicak_hedef, orta_hedef, soguk_hedef = 3, 2, 1
+                    min_toplam, max_toplam = 110, 250 
+                    min_kapsam, max_kapsam = 25, 59
+                else:
+                    # MANUEL SEÇİLDİYSE SOL MENÜDEKİ AYARLARI KULLAN
+                    if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
+                        ekstra_yasaklar.extend(last_draw_nums)
+                    elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                        devirler = [int(x.strip()) for x in devir_sayisi_str.split(',') if x.strip().isdigit()]
+                    
+                    yasaklar_input = [int(x.strip()) for x in yasak_sayilar_str.split(',') if x.strip().isdigit()]
+                    yasaklar = list(set(yasaklar_input + ekstra_yasaklar))
+                    
+                    bankolar = [int(x.strip()) for x in banko_sayilar_str.split(',') if x.strip().isdigit()]
+                    sabit_sayilar = list(set(devirler + bankolar))
+
+                    if tek_hedef + cift_hedef != 6: errors.append("Tek+Çift = 6 olmalı.")
+                    if bolge1 + bolge2 + bolge3 != 6: errors.append("Alt+Orta+Üst Bölge toplamı 6 olmalı.")
+                    if len(sabit_sayilar) > 6: errors.append("Banko ve Devir sayılarının toplamı 6'yı geçemez.")
+                    for s in sabit_sayilar:
+                        if s in yasaklar: errors.append(f"Hata: {s} sayısı hem Banko/Devir hem de Yasaklı listesinde olamaz!")
+                    
+                    if devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                        for d in devirler:
+                            if d not in last_draw_nums:
+                                errors.append(f"Hata: Girdiğiniz '{d}' sayısı geçen haftanın çekilişinde yok! Lütfen geçerli bir devir sayısı girin: {last_draw_nums}")
 
                 if errors:
                     for e in errors: st.error(e)
@@ -2757,85 +3549,131 @@ elif selected_game == "SÜPER LOTO AI":
                     b_med = sum(1 for x in sabit_sayilar if x in medium_nums)
                     b_cold = sum(1 for x in sabit_sayilar if x in cold_nums)
 
-                    req_hot = s_hedef - b_hot
-                    req_med = o_hedef - b_med
-                    req_cold = c_hedef - b_cold
+                    req_hot = sicak_hedef - b_hot
+                    req_med = orta_hedef - b_med
+                    req_cold = soguk_hedef - b_cold
 
                     if req_hot < 0 or req_med < 0 or req_cold < 0:
                         st.error("🚨 HATA: Banko sayılarının frekansları, belirlediğin hedefleri aşıyor!")
                     elif req_hot > len(hot_pool) or req_med > len(med_pool) or req_cold > len(cold_pool):
                         st.error(f"🚨 HATA: Kotalar havuzdaki sayıları aşıyor! (Sıcak havuzda {len(hot_pool)}, Orta havuzda {len(med_pool)}, Soğuk havuzda {len(cold_pool)} sayı kaldı)")
                     else:
-                        candidates = []
                         valid_combinations = []
-                        attempts = 0
-                        
-                        while len(candidates) < 100000 and attempts < 200000:
-                            attempts += 1
-                            h_pick = random.sample(hot_pool, req_hot) if req_hot > 0 else []
-                            m_pick = random.sample(med_pool, req_med) if req_med > 0 else []
-                            c_pick = random.sample(cold_pool, req_cold) if req_cold > 0 else []
-                            col = sorted(sabit_sayilar + h_pick + m_pick + c_pick)
-                            if len(set(col)) == 6:
-                                candidates.append(tuple(col))
-                        
-                        candidates = list(set(candidates))
-                        
-                        for col in candidates:
-                            if devir_secimi == "VAR (Sistem rastgele 1 sayı seçsin)":
-                                ortak_sayi_adedi = sum(1 for x in col if x in last_draw_nums)
-                                if ortak_sayi_adedi != 1: 
-                                    continue
+                        hata_kodlari = {
+                            "frekans_havuzu": 0, "devir": 0, "tek_cift": 0, 
+                            "bolge": 0, "kok": 0, "ardisik": 0, "can_kapsam": 0
+                        }
 
-                            b1 = sum(1 for x in col if 1 <= x <= 20)
-                            b2 = sum(1 for x in col if 21 <= x <= 40)
-                            b3 = sum(1 for x in col if 41 <= x <= 60)
-                            if b1 != bolge1 or b2 != bolge2 or b3 != bolge3: continue
+                        attempts = 0
+                        max_attempts = 150000 
+
+                        while len(valid_combinations) < (sl_kolon_sayisi * 3) and attempts < max_attempts:
+                            attempts += 1
                             
+                            h_pick = random.sample(hot_pool, min(sicak_hedef, len(hot_pool))) if sicak_hedef > 0 else []
+                            m_pick = random.sample(med_pool, min(orta_hedef, len(med_pool))) if orta_hedef > 0 else []
+                            c_pick = random.sample(cold_pool, min(soguk_hedef, len(cold_pool))) if soguk_hedef > 0 else []
+                            
+                            col = sorted(sabit_sayilar + h_pick + m_pick + c_pick)
+                            
+                            if len(set(col)) != 6: 
+                                hata_kodlari["frekans_havuzu"] += 1
+                                continue
+                                
                             tek = sum(1 for x in col if x % 2 != 0)
-                            cift = 6 - tek
-                            if tek != tek_hedef or cift != cift_hedef: continue
-                            
-                            has_cons = any(col[i]+1 == col[i+1] for i in range(5))
-                            if (ardisik == "VAR" and not has_cons) or (ardisik == "YOK" and has_cons): continue
-                            
+                            if tek != tek_hedef: 
+                                hata_kodlari["tek_cift"] += 1
+                                continue
+                                
+                            b1 = sum(1 for x in col if 1 <= x <= 20)
+                            if b1 != bolge1:
+                                hata_kodlari["bolge"] += 1
+                                continue
+                                
+                            b2 = sum(1 for x in col if 21 <= x <= 40)
+                            if b2 != bolge2:
+                                hata_kodlari["bolge"] += 1
+                                continue
+                                
+                            b3 = 6 - (b1 + b2)
+                            if b3 != bolge3: 
+                                hata_kodlari["bolge"] += 1
+                                continue
+
                             roots = [x % 10 for x in col]
-                            r_counts = list(Counter(roots).values())
-                            r_counts.sort(reverse=True)
+                            unique_roots = len(set(roots))
                             
                             if kese_koku == "VAR (1 Çift)":
-                                if r_counts != [2, 1, 1, 1, 1]: continue
-                            else:
-                                if r_counts != [1, 1, 1, 1, 1, 1]: continue
+                                if unique_roots != 5: 
+                                    hata_kodlari["kok"] += 1
+                                    continue
+                            elif kese_koku == "YOK":
+                                if unique_roots != 6: 
+                                    hata_kodlari["kok"] += 1
+                                    continue
+
+                            # --- KESİN EMİR UYGULAMASI (ÇİFT ARDIŞIK ENGELİ) ---
+                            cons_count = 0
+                            for i in range(5):
+                                if col[i] + 1 == col[i+1]:
+                                    cons_count += 1
+                                    
+                            if cons_count > 1: 
+                                hata_kodlari["ardisik"] += 1
+                                continue
+                                
+                            has_cons = (cons_count == 1)
+
+                            if (ardisik == "VAR" and not has_cons) or (ardisik == "YOK" and has_cons): 
+                                hata_kodlari["ardisik"] += 1
+                                continue
+
+                            toplam = sum(col)
+                            if not (min_toplam <= toplam <= max_toplam):
+                                hata_kodlari["can_kapsam"] += 1
+                                continue
+                                
+                            if not (min_kapsam <= (col[-1] - col[0]) <= max_kapsam):
+                                hata_kodlari["can_kapsam"] += 1
+                                continue
+
+                            if devir_secimi == "YOK (Önceki haftadan sayı gelmesin)":
+                                if any(x in last_draw_nums for x in col): 
+                                    hata_kodlari["devir"] += 1
+                                    continue
+                            elif devir_secimi == "VAR (Sistem rastgele 1 sayı seçsin)":
+                                if sum(1 for x in col if x in last_draw_nums) != 1: 
+                                    hata_kodlari["devir"] += 1
+                                    continue
+                            elif devir_secimi == "VAR (Sayıyı ben seçeceğim)":
+                                try:
+                                    ds = int(devir_sayisi_str)
+                                    if ds not in col or sum(1 for x in col if x in last_draw_nums) != 1: 
+                                        hata_kodlari["devir"] += 1
+                                        continue
+                                except: 
+                                    pass
+
+                            dusman_skoru = sum(1 for pair in combinations(col, 2) if is_enemy(pair[0], pair[1]))
+                            klan_cesitliligi = len(set([klan_labels.get(x, 0) for x in col]))
                             
-                            enemy_found = False
-                            for pair in combinations(col, 2):
-                                if is_enemy(pair[0], pair[1]):
-                                    enemy_found = True
-                                    break
-                            if enemy_found: continue
-                            
-                            if not (min_toplam <= sum(col) <= max_toplam): continue
-                            if not (min_kapsam <= (col[-1] - col[0]) <= max_kapsam): continue
-                            
-                            klan_cesitliligi = len(set([klan_labels[x] for x in col if x in klan_labels]))
                             valid_combinations.append({
-                                'c': col, 'sum': sum(col), 'klan': klan_cesitliligi
+                                'c': tuple(col), 'sum': sum(col), 'klan': klan_cesitliligi, 'dusman_sayisi': dusman_skoru
                             })
+                            
+                            unique_v = {v['c']: v for v in valid_combinations}.values()
+                            valid_combinations = list(unique_v)
 
                         if len(valid_combinations) > 0:
-                            valid_combinations.sort(key=lambda x: (-x['klan'], abs(x['sum'] - 183)))
-                            
+                            valid_combinations.sort(key=lambda x: (x['dusman_sayisi'], -x['klan'], abs(x['sum'] - 183)))
                             gosterilecek_adet = min(sl_kolon_sayisi, len(valid_combinations))
-                        
-                            if gosterilecek_adet < sl_kolon_sayisi:
-                                st.warning(f"Sadece {len(valid_combinations)} kusursuz dizilim bulunabildi. Kurallarınız çok katı olduğu için {sl_kolon_sayisi} adet kolon oluşturulamadı. Bulunanların tamamı aşağıdadır:")
-                            else:
-                                st.success(f"Tüm ağır filtreler aşıldı! Havuzdaki {len(valid_combinations)} kusursuz dizilim arasından EN İYİ {gosterilecek_adet} kolon seçildi.")
+                            
+                            st.success(f"Tüm katı filtreler başarıyla aşıldı! En kusursuz {gosterilecek_adet} kolon kurgulandı.")
 
                             for i in range(gosterilecek_adet):
                                 secilen = valid_combinations[i]['c']
                                 klan_degeri = valid_combinations[i]['klan']
+                                d_skor = valid_combinations[i]['dusman_sayisi']
                                 
                                 if sl_kolon_sayisi > 1:
                                     st.markdown(f"<h4 style='color:#059669; text-align:center; margin-top:20px; font-weight:900; background-color:#ecfdf5; padding:5px; border-radius:5px;'>✨ KOLON {i+1}</h4>", unsafe_allow_html=True)
@@ -2852,407 +3690,420 @@ elif selected_game == "SÜPER LOTO AI":
                                 """
                                 st.markdown(html_balls, unsafe_allow_html=True)
                                 
+                                dusman_etiketi = f"{d_skor} (Esnetildi)" if d_skor > 0 else "0 (Temiz)"
+                                renk = "#eab308" if d_skor > 0 else "#22c55e"
+                                
                                 mc1, mc2, mc3, mc4 = st.columns(4)
                                 with mc1: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>📉 Çan Eğrisi</b><br><span style='font-size:20px; color:#059669;'>{sum(secilen)}</span></div>", unsafe_allow_html=True)
                                 with mc2: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>↔️ Kapsam</b><br><span style='font-size:20px; color:#059669;'>{secilen[-1] - secilen[0]}</span></div>", unsafe_allow_html=True)
                                 with mc3: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🛡️ Klan Zırhı</b><br><span style='font-size:20px; color:#5a9bd5;'>{klan_degeri} Farklı</span></div>", unsafe_allow_html=True)
-                                with mc4: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🤖 Düşman Testi</b><br><span class='highlight-yellow' style='font-size:16px;'>0 (Temiz)</span></div>", unsafe_allow_html=True)
+                                with mc4: st.markdown(f"<div class='metric-card' style='padding:10px;'><b>🤖 Düşman Testi</b><br><span style='font-size:18px; font-weight:bold; color:{renk};'>{dusman_etiketi}</span></div>", unsafe_allow_html=True)
                                 
                                 if i < gosterilecek_adet - 1:
                                     st.markdown("<hr style='border: 1px dashed #cbd5e1; margin: 30px 0;'>", unsafe_allow_html=True)
+                                
                         else:
-                            st.error("🚨 PARADOKS TESPİT EDİLDİ: Bu kadar katı kuralı aynı anda sağlayan hiçbir sayı evrende bulunamadı. Kurallardan birini esnetin.")
-
-        # --- 4 YENİ SEKME (CSS İLE SİMSİYAH VE KALIN YAPILANDIRILMIŞ) ---
-        st.markdown("<br><hr style='border: 3px solid #e2e8f0; margin-bottom: 25px;'>", unsafe_allow_html=True)
-        
-        st.markdown("""
-        <style>
-        button[data-baseweb="tab"]:nth-child(3) p, button[data-baseweb="tab"]:nth-child(4) p {
-            font-weight: 900 !important;
-            font-size: 16px !important;
-            color: #000000 !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        tab_tarih, tab_detayli, tab_simulasyon, tab_sorgu = st.tabs([
-            "📈 TARİHSEL BİLANÇO (GENEL İSTATİSTİK)", 
-            "🧠 DETAYLI YAPAY ZEKA ANALİZİ", 
-            "🎯 SONRAKİ ÇEKİLİŞ SİMÜLASYONU",
-            "🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU"
-        ])
-
-        with tab_tarih:
-            last_d = valid_draws[0]
-            st.markdown("#### 🎯 SON ÇEKİLİŞİN MR'I (Röntgen)")
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(f"<div class='metric-card' style='padding:10px;'><b>Frekans Şablonu</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_f_pattern(last_d)}</span></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='metric-card' style='padding:10px;'><b>Tek/Çift Dengesi</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_tc(last_d)}</span></div>", unsafe_allow_html=True)
-            c3.markdown(f"<div class='metric-card' style='padding:10px;'><b>Ardışık Durumu</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_ard(last_d)}</span></div>", unsafe_allow_html=True)
-            
-            c4, c5, c6 = st.columns(3)
-            c4.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Kök Eşleşmesi</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_k(last_d)}</span></div>", unsafe_allow_html=True)
-            c5.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Bölge Dağılımı (Alt-Orta-Üst)</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_bolge_pattern_sl(last_d)}</span></div>", unsafe_allow_html=True)
-            
-            devir_bilgisi = get_dev(valid_draws[1], last_d) if len(valid_draws) > 1 else "YOK"
-            c6.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Devir (Geçen Haftadan)</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{devir_bilgisi}</span></div>", unsafe_allow_html=True)
-            
-            st.markdown("<br>#### 📊 OYUNUN GENEL KARAKTERİ (Tüm Zamanlar)", unsafe_allow_html=True)
-            
-            hist_f = Counter()
-            hist_tc = Counter()
-            hist_ard = Counter()
-            hist_kok = Counter()
-            hist_dev = Counter()
-            hist_bolge = Counter()
-            
-            for i in range(len(valid_draws)):
-                d = valid_draws[i]
-                hist_f[get_f_pattern(d)] += 1
-                hist_tc[get_tc(d)] += 1
-                hist_ard[get_ard(d)] += 1
-                hist_kok[get_k(d)] += 1
-                hist_bolge[get_bolge_pattern_sl(d)] += 1
-                if i < len(valid_draws) - 1:
-                    hist_dev[get_dev(valid_draws[i+1], valid_draws[i])] += 1
-                    
-            tot = len(valid_draws)
-            tot_dev = tot - 1 if tot > 1 else 1
-            
-            def render_bar(label, count, total_val):
-                pct = (count / total_val) * 100
-                return f'''
-                <div style="margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                        <span style="font-weight: 800; color: #334155; font-size: 13px;">{label}</span>
-                        <span style="font-weight: 900; color: #059669; font-size: 13px;">%{pct:.1f} <span style="color:#94a3b8; font-size:11px;">({count} Kez)</span></span>
-                    </div>
-                    <div style="width: 100%; background-color: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
-                        <div style="width: {pct}%; background-color: #059669; height: 100%;"></div>
-                    </div>
-                </div>
-                '''
-                
-            col_bar1, col_bar2 = st.columns(2)
-            with col_bar1:
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🔥 En Çok Gelen Frekanslar (İlk 5)</h5>", unsafe_allow_html=True)
-                for k, v in hist_f.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎲 Ardışık Sayı Durumu</h5>", unsafe_allow_html=True)
-                for k, v in hist_ard.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>♻️ Geçen Haftadan Devir (Kilit Sayı)</h5>", unsafe_allow_html=True)
-                for k, v in hist_dev.most_common(): st.markdown(render_bar(k, v, tot_dev), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            with col_bar2:
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>⚖️ Tek/Çift Dağılımı</h5>", unsafe_allow_html=True)
-                for k, v in hist_tc.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🧩 Kök Eşleşmesi (Son Rakam)</h5>", unsafe_allow_html=True)
-                for k, v in hist_kok.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
-                st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎯 Bölge Dağılımı (Alt-Orta-Üst)</h5>", unsafe_allow_html=True)
-                for k, v in hist_bolge.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-        with tab_detayli:
-            st.markdown("### 🧠 İLERİ DÜZEY İSTİHBARAT (RADAR SİSTEMİ)")
-            
-            col_rad1, col_rad2 = st.columns(2)
-            with col_rad1:
-                st.markdown("#### 🔥 ALEV ALANLAR (Momentum İvmesi)")
-                if momentum_sayilari:
-                    alevler_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
-                    for k, v in sorted(momentum_sayilari.items(), key=lambda item: item[1], reverse=True):
-                        alevler_html += f"<div style='background-color:#fffbea; border:1.5px solid #000000; border-radius:6px; padding:8px 10px; text-align:center; min-width:85px;'><div style='color:#b45309; font-size:13px; font-weight:900; margin-bottom:2px;'>Sayı {k}</div><div style='font-size:10px; color:#64748b; font-weight:bold; margin-bottom:3px;'>Son 10 Çekilişte</div><div style='font-size:16px; color:#059669; font-weight:900;'>{v} Kez</div></div>"
-                    alevler_html += "</div>"
-                    st.markdown(alevler_html, unsafe_allow_html=True)
-                else: st.info("Son 10 çekilişte çıldıran sayı yok.")
-                
-            with col_rad2:
-                st.markdown("#### 💤 UYUYAN DEVLER (Kuluçka)")
-                if uyuyan_devler:
-                    uyuyan_html = "<div style='display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
-                    for k, v in sorted(uyuyan_devler.items(), key=lambda item: item[1], reverse=True):
-                        uyuyan_html += f"<div style='background-color:#f0f9ff; border:1px solid #bae6fd; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;'><strong style='color:#0369a1; font-size:13px;'>Sayı {k}</strong><span style='font-size:12px; color:#64748b; font-weight:bold;'>{v} Çekiliştir Yok</span></div>"
-                    uyuyan_html += "</div>"
-                    st.markdown(uyuyan_html, unsafe_allow_html=True)
-                else: st.info("Uyuyan dev bulunmuyor.")
-
-            st.markdown("---")
-            st.markdown("<h4 style='color:#059669;'>🧬 ÇAPRAZ GEÇİŞ ANALİZİ (MARKOV MATRİSİ)</h4>", unsafe_allow_html=True)
-            
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0ea5e9; padding: 12px 15px; margin-bottom: 15px; border-radius: 4px; color: #334155; font-size: 0.90rem; line-height: 1.5;'>
-                Frekansları seçin; <b>Yapay Zeka motoru</b> sizin için bu frekansın tarihte kaç kez yaşandığını, bu frekans geldiğinde <b>tek/çift</b> yüzdesini, <b>kök eşleşme</b>, önceki haftadan <b>devir</b> yüzdelerini, <b>ardışık ve alt/orta/üst bölge</b> yüzdelerini sizin için hesaplasın.
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
-                <div style="flex: 1; background-color: #fff5f5; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #c53030; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔥 SICAK (≥{hot_limit}): {len(hot_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #742a2a; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(hot_nums)))}</p>
-                </div>
-                <div style="flex: 1; background-color: #ebf8ff; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #2b6cb0; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔵 ORTA ({cold_limit+1}-{hot_limit-1}): {len(medium_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #2c5282; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(medium_nums)))}</p>
-                </div>
-                <div style="flex: 1; background-color: #fefbeb; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <strong style="color: #b7791f; font-size: 0.90rem; display: block; margin-bottom: 5px;">❄️ SOĞUK (≤{cold_limit}): {len(cold_nums)} Adet</strong>
-                    <p style="font-family: monospace; font-size: 12px; color: #744210; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(cold_nums)))}</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            last_s = sum(1 for x in valid_draws[0] if x in hot_nums)
-            last_o = sum(1 for x in valid_draws[0] if x in medium_nums)
-            last_c = sum(1 for x in valid_draws[0] if x in cold_nums)
-            
-            st.markdown("""
-            <div style='border: 3px solid #000000; border-radius: 10px; padding: 20px; background-color: #f8fafc; margin-bottom: 20px; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.1);'>
-                <h4 style='text-align: center; color: #0f172a; font-weight: 900; margin-top: 0; margin-bottom: 20px; letter-spacing: 0.5px;'>🎯 HEDEF FREKANS KOMBİNASYONUNU SEÇİN</h4>
-            """, unsafe_allow_html=True)
-            
-            cc1, cc2, cc3 = st.columns(3)
-            with cc1:
-                st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
-                target_s = st.number_input("Sıcak (S)", 0, 6, last_s, key="sl_ts_m", label_visibility="collapsed")
-            with cc2:
-                st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
-                target_o = st.number_input("Orta (O)", 0, 6, last_o, key="sl_to_m", label_visibility="collapsed")
-            with cc3:
-                st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
-                target_c = st.number_input("Soğuk (C)", 0, 6, last_c, key="sl_tc_m", label_visibility="collapsed")
-                
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if target_s + target_o + target_c != 6:
-                st.warning("⚠️ Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
-            else:
-                target_freq = f"{target_s}S - {target_o}O - {target_c}C"
-                t_draws = []
-                for i in range(1, len(valid_draws)):
-                    if get_f_pattern(valid_draws[i]) == target_freq:
-                        next_d = valid_draws[i-1]
-                        t_draws.append({
-                            'tc': get_tc(next_d), 'ard': get_ard(next_d), 'kok': get_k(next_d),
-                            'dev': get_dev(valid_draws[i], next_d), 'bolge': get_bolge_pattern_sl(next_d)
-                        })
-
-                if len(t_draws) > 0:
-                    st.info(f"**Seçilen Şablon:** {target_freq} | Tarihte bu şablondan sonra **{len(t_draws)}** kez çekiliş yapılmış:")
-                    tc_c = Counter([x['tc'] for x in t_draws])
-                    ard_c = Counter([x['ard'] for x in t_draws])
-                    kok_c = Counter([x['kok'] for x in t_draws])
-                    dev_c = Counter([x['dev'] for x in t_draws])
-                    bolge_c = Counter([x['bolge'] for x in t_draws])
-                    
-                    def format_pct(counter):
-                        total = sum(counter.values())
-                        return "\n".join([f"- {k}: %{round((v/total)*100, 2)}" for k, v in counter.most_common()])
-                    
-                    copy_text = f"🎯 ÇAPRAZ ANALİZ ÇIKTISI (BAZ FREKANS: {target_freq} - {len(t_draws)} Kez Yaşandı)\n\n--- 1. TEK/ÇİFT REFLEKSİ ---\n{format_pct(tc_c)}\n\n--- 2. ARDIŞIK REFLEKSİ ---\n{format_pct(ard_c)}\n\n--- 3. KÖK EŞLEŞMESİ REFLEKSİ ---\n{format_pct(kok_c)}\n\n--- 4. DEVİR REFLEKSİ ---\n{format_pct(dev_c)}\n\n--- 5. BÖLGE REFLEKSİ (Alt-Orta-Üst) ---\n{format_pct(bolge_c)}"
-                    
-                    st.markdown(f'''
-                    <div style="background-color: #ffffff; padding: 20px; border: 2px solid #000000; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                        <pre style="color: #000000; font-weight: 800; font-size: 15px; font-family: Consolas, monospace; background: transparent; border: none; margin: 0; padding: 0;">{copy_text}</pre>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                else:
-                    st.warning(f"Tarihte daha önce {target_freq} şablonu yaşanıp ardından çekiliş yapılmamış.")
-
-        with tab_simulasyon:
-            st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🎯 GELECEK HAFTA PROJEKSİYONU (YAPAY ZEKA TAHMİNİ)</h3>", unsafe_allow_html=True)
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #0ea5e9; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.15rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
-                Bu motor, son çekilişin 6 farklı DNA özelliğini alır, oyunun tüm geçmişini tarar ve tarihte bu özelliklerden sonra en yüksek ihtimalle nelerin geldiğini hesaplar.
-            </div>
-            """, unsafe_allow_html=True)
-            
-            history_sim = []
-            for i in range(len(valid_draws)):
-                d = valid_draws[i]
-                dev_durum = "Bilinmiyor"
-                if i + 1 < len(valid_draws):
-                    dev_durum = get_dev(valid_draws[i+1], d)
-                
-                history_sim.append({
-                    'freq': get_f_pattern(d),
-                    'oe': get_tc(d),
-                    'cons': get_ard(d),
-                    'root': get_k(d),
-                    'bolge': get_bolge_pattern_sl(d),
-                    'devir': dev_durum
-                })
-            
-            last_sim = history_sim[0] 
-            
-            def render_transition(prop_key, target_val, title):
-                next_states = []
-                for i in range(1, len(history_sim)):
-                    if history_sim[i][prop_key] == target_val:
-                        next_states.append(history_sim[i-1][prop_key])
-                
-                html_str = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); height:100%;'>"
-                html_str += f"<h5 style='color:#0f172a; font-weight:900; font-size:15px; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
-                html_str += f"<p style='font-size:12px; color:#64748b; margin-bottom:10px;'>Son Çekiliş: <b style='color:#059669;'>{target_val}</b></p>"
-                
-                if not next_states:
-                    html_str += "<span style='color:#64748b; font-size:13px;'>Tarihte örnek bulunamadı.</span></div>"
-                    return html_str
-                
-                c = Counter(next_states)
-                total = len(next_states)
-                html_str += "<ul style='margin-bottom:0; padding-left:20px; font-size:14px;'>"
-                for k, v in c.most_common(3): 
-                    pct = (v/total)*100
-                    html_str += f"<li style='margin-bottom:5px;'><b>%{pct:.1f}</b> ihtimalle <span style='color:#059669; font-weight:bold;'>{k}</span></li>"
-                html_str += "</ul></div>"
-                return html_str
-
-            st.markdown(f"<h5 style='color:#059669; margin-bottom:15px;'>🔍 SON ÇEKİLİŞ ({valid_draws[0]}) BAZ ALINARAK YAPILAN MARKOV HESAPLAMALARI:</h5>", unsafe_allow_html=True)
-            
-            sc1, sc2, sc3 = st.columns(3)
-            with sc1:
-                st.markdown(render_transition('freq', last_sim['freq'], "1. Frekans Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('devir', last_sim['devir'], "4. Devir Radarı"), unsafe_allow_html=True)
-            with sc2:
-                st.markdown(render_transition('bolge', last_sim['bolge'], "2. Bölge Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('cons', last_sim['cons'], "5. Ardışık Radarı"), unsafe_allow_html=True)
-            with sc3:
-                st.markdown(render_transition('oe', last_sim['oe'], "3. Tek/Çift Radarı"), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(render_transition('root', last_sim['root'], "6. Kök Eşleşme Radarı"), unsafe_allow_html=True)
-                
-            st.markdown("<hr style='border: 2px dashed #cbd5e1; margin: 25px 0;'>", unsafe_allow_html=True)
-            st.markdown("#### 🚨 KRİTİK İSTİHBARAT: 'SAYI KESİLME' ALGORİTMASI")
-            
-            streak_3_count = 0
-            streak_4_count = 0
-            for num in range(1, 61):
-                for i in range(3, len(valid_draws)):
-                    if num in valid_draws[i] and num in valid_draws[i-1] and num in valid_draws[i-2]:
-                        streak_3_count += 1
-                        if num in valid_draws[i-3]:
-                            streak_4_count += 1
+                            st.error("🚨 PARADOKS TESPİT EDİLDİ: Seçtiğiniz kurallar havuzda hiçbir sayı bırakmadı!")
+                            en_cok_elenen = max(hata_kodlari, key=hata_kodlari.get)
                             
-            if streak_3_count > 0:
-                perc_devam = (streak_4_count / streak_3_count) * 100
-                perc_kesilme = 100 - perc_devam
-                st.markdown(f"""
-                <div style='background-color: #fff1f2; border: 2px solid #ef4444; padding: 15px; border-radius: 8px; color: #7f1d1d;'>
-                    Süper Loto tarihinde herhangi bir sayının <b>3 hafta ÜST ÜSTE çıkma durumu tam {streak_3_count} kez</b> yaşanmıştır.<br><br>
-                    Algoritmanın tespitine göre, 3 hafta üst üste çıkan bir sayının <b>4. HAFTA KESİN OLARAK KESİLME (GELMEME) ihtimali: <span style='font-size:22px; font-weight:900;'>%{perc_kesilme:.2f}</span></b>'dir.<br>
-                    <span style='font-size:14px; color:#991b1b;'><i>(Kupon yaparken, son 3 haftadır çıkan bir sayı varsa onu <b>%{perc_kesilme:.2f} matematiksel güvence ile</b> eleyebilirsiniz.)</i></span>
+                            sebep_metni = ""
+                            if en_cok_elenen == "frekans_havuzu": sebep_metni = "Sıcak/Orta/Soğuk havuzlarındaki güncel sayılar, hedefinizi beslemeye yetmiyor."
+                            elif en_cok_elenen == "tek_cift": sebep_metni = "Havuzdaki sayıların güncel matematiği, istediğiniz Tek/Çift oranını vermiyor."
+                            elif en_cok_elenen == "bolge": sebep_metni = "İstediğiniz Bölge dağılımı; Frekans sayılarının yığıldığı bölgelerle tamamen çelişiyor."
+                            elif en_cok_elenen == "devir": sebep_metni = "Devir kuralınız aktif frekans havuzlarında yer almıyor."
+                            elif en_cok_elenen == "can_kapsam": sebep_metni = "Çan Eğrisi veya Kapsam sınırlarınız çok dar. Sayılar bu aralığa sığamıyor."
+                            elif en_cok_elenen == "kok": sebep_metni = "Kök eşleşmesi kuralınız çok katı."
+                            elif en_cok_elenen == "ardisik": sebep_metni = "Sistem çift/üçlü ardışıkları reddettiği için elinizdeki havuz daraldı."
+                                
+                            st.warning(f"""
+                            **🔍 GERÇEK X-RAY TEŞHİS RAPORU:**
+                            Motor {attempts} defa Kuantum taraması yaptı ancak sonuç alamadı. 
+                            Sistemi kilitleyen ASIL Kural: **{en_cok_elenen.upper()} FİLTRESİ**.
+                            
+                            **Kilitlenme Sebebi:** {sebep_metni}
+                            """)
+        
+        # --- 4 YENİ SEKME VE ALT BUTONLAR (GİZLEME KİLİDİ EKLENDİ) ---
+        if not (sl_basla_btn or sl_ai_basla_btn):
+            st.markdown("<br><hr style='border: 3px solid #e2e8f0; margin-bottom: 25px;'>", unsafe_allow_html=True)
+            
+            st.markdown("""
+            <style>
+            button[data-baseweb="tab"]:nth-child(3) p, button[data-baseweb="tab"]:nth-child(4) p {
+                font-weight: 900 !important;
+                font-size: 16px !important;
+                color: #000000 !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            tab_tarih, tab_detayli, tab_simulasyon, tab_sorgu = st.tabs([
+                "📈 TARİHSEL BİLANÇO (GENEL İSTATİSTİK)", 
+                "🧠 DETAYLI YAPAY ZEKA ANALİZİ", 
+                "🎯 SONRAKİ ÇEKİLİŞ SİMÜLASYONU",
+                "🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU"
+            ])
+
+            with tab_tarih:
+                last_d = valid_draws[0]
+                st.markdown("#### 🎯 SON ÇEKİLİŞİN MR'I (Röntgen)")
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f"<div class='metric-card' style='padding:10px;'><b>Frekans Şablonu</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_f_pattern(last_d)}</span></div>", unsafe_allow_html=True)
+                c2.markdown(f"<div class='metric-card' style='padding:10px;'><b>Tek/Çift Dengesi</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_tc(last_d)}</span></div>", unsafe_allow_html=True)
+                c3.markdown(f"<div class='metric-card' style='padding:10px;'><b>Ardışık Durumu</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_ard(last_d)}</span></div>", unsafe_allow_html=True)
+                
+                c4, c5, c6 = st.columns(3)
+                c4.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Kök Eşleşmesi</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_k(last_d)}</span></div>", unsafe_allow_html=True)
+                c5.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Bölge Dağılımı (Alt-Orta-Üst)</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{get_bolge_pattern_sl(last_d)}</span></div>", unsafe_allow_html=True)
+                
+                devir_bilgisi = get_dev(valid_draws[1], last_d) if len(valid_draws) > 1 else "YOK"
+                c6.markdown(f"<div class='metric-card' style='padding:10px; margin-top:10px;'><b>Devir (Geçen Haftadan)</b><br><span style='color:#059669; font-weight:900; font-size:16px;'>{devir_bilgisi}</span></div>", unsafe_allow_html=True)
+                
+                st.markdown("<br>#### 📊 OYUNUN GENEL KARAKTERİ (Tüm Zamanlar)", unsafe_allow_html=True)
+                
+                hist_f = Counter()
+                hist_tc = Counter()
+                hist_ard = Counter()
+                hist_kok = Counter()
+                hist_dev = Counter()
+                hist_bolge = Counter()
+                
+                for i in range(len(valid_draws)):
+                    d = valid_draws[i]
+                    hist_f[get_f_pattern(d)] += 1
+                    hist_tc[get_tc(d)] += 1
+                    hist_ard[get_ard(d)] += 1
+                    hist_kok[get_k(d)] += 1
+                    hist_bolge[get_bolge_pattern_sl(d)] += 1
+                    if i < len(valid_draws) - 1:
+                        hist_dev[get_dev(valid_draws[i+1], valid_draws[i])] += 1
+                        
+                tot = len(valid_draws)
+                tot_dev = tot - 1 if tot > 1 else 1
+                
+                def render_bar(label, count, total_val):
+                    pct = (count / total_val) * 100
+                    return f'''
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span style="font-weight: 800; color: #334155; font-size: 13px;">{label}</span>
+                            <span style="font-weight: 900; color: #059669; font-size: 13px;">%{pct:.1f} <span style="color:#94a3b8; font-size:11px;">({count} Kez)</span></span>
+                        </div>
+                        <div style="width: 100%; background-color: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; border: 1px solid #cbd5e1; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
+                            <div style="width: {pct}%; background-color: #059669; height: 100%;"></div>
+                        </div>
+                    </div>
+                    '''
+                    
+                col_bar1, col_bar2 = st.columns(2)
+                with col_bar1:
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🔥 En Çok Gelen Frekanslar (İlk 5)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_f.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎲 Ardışık Sayı Durumu</h5>", unsafe_allow_html=True)
+                    for k, v in hist_ard.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>♻️ Geçen Haftadan Devir (Kilit Sayı)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_dev.most_common(): st.markdown(render_bar(k, v, tot_dev), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with col_bar2:
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>⚖️ Tek/Çift Dağılımı</h5>", unsafe_allow_html=True)
+                    for k, v in hist_tc.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🧩 Kök Eşleşmesi (Son Rakam)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_kok.most_common(): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); margin-top:15px;'>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px;'>🎯 Bölge Dağılımı (Alt-Orta-Üst)</h5>", unsafe_allow_html=True)
+                    for k, v in hist_bolge.most_common(5): st.markdown(render_bar(k, v, tot), unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            with tab_detayli:
+                st.markdown("### 🧠 İLERİ DÜZEY İSTİHBARAT (RADAR SİSTEMİ)")
+                
+                col_rad1, col_rad2 = st.columns(2)
+                with col_rad1:
+                    st.markdown("#### 🔥 ALEV ALANLAR (Momentum İvmesi)")
+                    if momentum_sayilari:
+                        alevler_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
+                        for k, v in sorted(momentum_sayilari.items(), key=lambda item: item[1], reverse=True):
+                            alevler_html += f"<div style='background-color:#fffbea; border:1.5px solid #000000; border-radius:6px; padding:8px 10px; text-align:center; min-width:85px;'><div style='color:#b45309; font-size:13px; font-weight:900; margin-bottom:2px;'>Sayı {k}</div><div style='font-size:10px; color:#64748b; font-weight:bold; margin-bottom:3px;'>Son 10 Çekilişte</div><div style='font-size:16px; color:#059669; font-weight:900;'>{v} Kez</div></div>"
+                        alevler_html += "</div>"
+                        st.markdown(alevler_html, unsafe_allow_html=True)
+                    else: st.info("Son 10 çekilişte çıldıran sayı yok.")
+                    
+                with col_rad2:
+                    st.markdown("#### 💤 UYUYAN DEVLER (Kuluçka)")
+                    if uyuyan_devler:
+                        uyuyan_html = "<div style='display:grid; grid-template-columns: repeat(2, 1fr); gap:6px; border:2px solid #000000; padding:15px; border-radius:8px; background-color:#ffffff;'>"
+                        for k, v in sorted(uyuyan_devler.items(), key=lambda item: item[1], reverse=True):
+                            uyuyan_html += f"<div style='background-color:#f0f9ff; border:1px solid #bae6fd; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;'><strong style='color:#0369a1; font-size:13px;'>Sayı {k}</strong><span style='font-size:12px; color:#64748b; font-weight:bold;'>{v} Çekiliştir Yok</span></div>"
+                        uyuyan_html += "</div>"
+                        st.markdown(uyuyan_html, unsafe_allow_html=True)
+                    else: st.info("Uyuyan dev bulunmuyor.")
+
+                st.markdown("---")
+                st.markdown("<h4 style='color:#059669;'>🧬 ÇAPRAZ GEÇİŞ ANALİZİ (MARKOV MATRİSİ)</h4>", unsafe_allow_html=True)
+                
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0ea5e9; padding: 12px 15px; margin-bottom: 15px; border-radius: 4px; color: #334155; font-size: 0.90rem; line-height: 1.5;'>
+                    Frekansları seçin; <b>Yapay Zeka motoru</b> sizin için bu frekansın tarihte kaç kez yaşandığını, bu frekans geldiğinde <b>tek/çift</b> yüzdesini, <b>kök eşleşme</b>, önceki haftadan <b>devir</b> yüzdelerini, <b>ardışık ve alt/orta/üst bölge</b> yüzdelerini sizin için hesaplasın.
                 </div>
                 """, unsafe_allow_html=True)
-            else:
-                st.info("Süper Loto tarihinde henüz hiçbir sayı 3 hafta üst üste çıkmamıştır.")
-
-        with tab_sorgu:
-            st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU</h3>", unsafe_allow_html=True)
-            st.markdown("""
-            <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #8b5cf6; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.10rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
-                Makinenin sinir uçlarına bağlanın. Veritabanındaki en popüler şablonları inceleyin ve kendi belirlediğiniz frekans senaryosunun ardından yaşanacakları simüle edin.
-            </div>
-            """, unsafe_allow_html=True)
-
-            all_freqs = [get_f_pattern(d) for d in valid_draws]
-            freq_counts = Counter(all_freqs)
-            
-            st.markdown("#### 📊 VERİTABANINDAKİ EN POPÜLER FREKANS ŞABLONLARI")
-            pop_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-bottom:30px;'>"
-            for f, c in freq_counts.most_common(5):
-                pop_html += f"<div style='background-color:#ffffff; border:2px solid #cbd5e1; padding:10px 15px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05); text-align:center;'><b>{f}</b><br><span style='color:#059669; font-weight:900; font-size:14px;'>{c} Kez Yaşandı</span></div>"
-            pop_html += "</div>"
-            st.markdown(pop_html, unsafe_allow_html=True)
-
-            st.markdown("#### 🔍 HEDEF FREKANSI BELİRLEYİN")
-            cq1, cq2, cq3 = st.columns(3)
-            with cq1:
-                st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
-                q_s = st.number_input("Sıcak", 0, 6, 2, key="sl_q_s", label_visibility="collapsed")
-            with cq2:
-                st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
-                q_o = st.number_input("Orta", 0, 6, 3, key="sl_q_o", label_visibility="collapsed")
-            with cq3:
-                st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
-                q_c = st.number_input("Soğuk", 0, 6, 1, key="sl_q_c", label_visibility="collapsed")
                 
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            if st.button("🚀 DİNAMİK İSTİHBARATI GETİR", type="primary", use_container_width=True, key="sl_sq_btn"):
-                if q_s + q_o + q_c != 6:
-                    st.error("⚠️ HATA: Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
+                st.markdown(f"""
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
+                    <div style="flex: 1; background-color: #fff5f5; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #c53030; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔥 SICAK (≥{hot_limit}): {len(hot_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #742a2a; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(hot_nums)))}</p>
+                    </div>
+                    <div style="flex: 1; background-color: #ebf8ff; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #2b6cb0; font-size: 0.90rem; display: block; margin-bottom: 5px;">🔵 ORTA ({cold_limit+1}-{hot_limit-1}): {len(medium_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #2c5282; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(medium_nums)))}</p>
+                    </div>
+                    <div style="flex: 1; background-color: #fefbeb; border: 2px solid #000000; border-radius: 6px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <strong style="color: #b7791f; font-size: 0.90rem; display: block; margin-bottom: 5px;">❄️ SOĞUK (≤{cold_limit}): {len(cold_nums)} Adet</strong>
+                        <p style="font-family: monospace; font-size: 12px; color: #744210; margin: 0; line-height: 1.6;">{', '.join(map(str, sorted(cold_nums)))}</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                last_s = sum(1 for x in valid_draws[0] if x in hot_nums)
+                last_o = sum(1 for x in valid_draws[0] if x in medium_nums)
+                last_c = sum(1 for x in valid_draws[0] if x in cold_nums)
+                
+                st.markdown("""
+                <div style='border: 3px solid #000000; border-radius: 10px; padding: 20px; background-color: #f8fafc; margin-bottom: 20px; box-shadow: 0 8px 16px -4px rgba(0,0,0,0.1);'>
+                    <h4 style='text-align: center; color: #0f172a; font-weight: 900; margin-top: 0; margin-bottom: 20px; letter-spacing: 0.5px;'>🎯 HEDEF FREKANS KOMBİNASYONUNU SEÇİN</h4>
+                """, unsafe_allow_html=True)
+                
+                cc1, cc2, cc3 = st.columns(3)
+                with cc1:
+                    st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
+                    target_s = st.number_input("Sıcak (S)", 0, 6, last_s, key="sl_ts_m", label_visibility="collapsed")
+                with cc2:
+                    st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
+                    target_o = st.number_input("Orta (O)", 0, 6, last_o, key="sl_to_m", label_visibility="collapsed")
+                with cc3:
+                    st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
+                    target_c = st.number_input("Soğuk (C)", 0, 6, last_c, key="sl_tc_m", label_visibility="collapsed")
+                    
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                if target_s + target_o + target_c != 6:
+                    st.warning("⚠️ Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
                 else:
-                    target_f_str = f"{q_s}S - {q_o}O - {q_c}C"
-                    q_results = {'oe': [], 'cons': [], 'root': [], 'bolge': [], 'devir': []}
-                    match_count = 0
-                    
+                    target_freq = f"{target_s}S - {target_o}O - {target_c}C"
+                    t_draws = []
                     for i in range(1, len(valid_draws)):
-                        if get_f_pattern(valid_draws[i]) == target_f_str:
-                            match_count += 1
-                            trigger_draw = valid_draws[i]
-                            next_draw = valid_draws[i-1]
-                            
-                            q_results['oe'].append(get_tc(next_draw))
-                            q_results['cons'].append(get_ard(next_draw))
-                            q_results['root'].append(get_k(next_draw))
-                            q_results['bolge'].append(get_bolge_pattern_sl(next_draw))
-                            q_results['devir'].append(get_dev(trigger_draw, next_draw))
-                    
-                    if match_count == 0:
-                        st.warning(f"Veritabanında '{target_f_str}' frekansının gelip de ardından çekiliş yapılan bir kayıt bulunamadı.")
-                    else:
-                        st.success(f"✅ HEDEF KİLİTLENDİ: Tarihte '{target_f_str}' şablonundan SONRAKİ HAFTA tam {match_count} kez çekiliş yapılmıştır. Makinenin gösterdiği refleksler aşağıdadır:")
+                        if get_f_pattern(valid_draws[i]) == target_freq:
+                            next_d = valid_draws[i-1]
+                            t_draws.append({
+                                'tc': get_tc(next_d), 'ard': get_ard(next_d), 'kok': get_k(next_d),
+                                'dev': get_dev(valid_draws[i], next_d), 'bolge': get_bolge_pattern_sl(next_d)
+                            })
+
+                    if len(t_draws) > 0:
+                        st.info(f"**Seçilen Şablon:** {target_freq} | Tarihte bu şablondan sonra **{len(t_draws)}** kez çekiliş yapılmış:")
+                        tc_c = Counter([x['tc'] for x in t_draws])
+                        ard_c = Counter([x['ard'] for x in t_draws])
+                        kok_c = Counter([x['kok'] for x in t_draws])
+                        dev_c = Counter([x['dev'] for x in t_draws])
+                        bolge_c = Counter([x['bolge'] for x in t_draws])
                         
-                        def print_q_stats(data_list, title):
-                            c = Counter(data_list)
-                            total = len(data_list)
-                            html = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; margin-bottom:15px; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>"
-                            html += f"<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
-                            for k, v in c.most_common():
-                                perc = (v / total) * 100
-                                html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px dashed #f1f5f9; padding-bottom:4px;'><span style='font-weight:bold; color:#334155; font-size:14px;'>{k}</span> <span style='color:#059669; font-weight:900; font-size:15px;'>%{perc:.2f}</span></div>"
-                            html += "</div>"
-                            return html
+                        def format_pct(counter):
+                            total = sum(counter.values())
+                            return "\n".join([f"- {k}: %{round((v/total)*100, 2)}" for k, v in counter.most_common()])
+                        
+                        copy_text = f"🎯 ÇAPRAZ ANALİZ ÇIKTISI (BAZ FREKANS: {target_freq} - {len(t_draws)} Kez Yaşandı)\n\n--- 1. TEK/ÇİFT REFLEKSİ ---\n{format_pct(tc_c)}\n\n--- 2. ARDIŞIK REFLEKSİ ---\n{format_pct(ard_c)}\n\n--- 3. KÖK EŞLEŞMESİ REFLEKSİ ---\n{format_pct(kok_c)}\n\n--- 4. DEVİR REFLEKSİ ---\n{format_pct(dev_c)}\n\n--- 5. BÖLGE REFLEKSİ (Alt-Orta-Üst) ---\n{format_pct(bolge_c)}"
+                        
+                        st.markdown(f'''
+                        <div style="background-color: #ffffff; padding: 20px; border: 2px solid #000000; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                            <pre style="color: #000000; font-weight: 800; font-size: 15px; font-family: Consolas, monospace; background: transparent; border: none; margin: 0; padding: 0;">{copy_text}</pre>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                    else:
+                        st.warning(f"Tarihte daha önce {target_freq} şablonu yaşanıp ardından çekiliş yapılmamış.")
 
-                        qc1, qc2 = st.columns(2)
-                        with qc1:
-                            st.markdown(print_q_stats(q_results['oe'], "1. TEK/ÇİFT REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['bolge'], "3. BÖLGE (ALT-ORTA-ÜST) REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['root'], "5. KÖK EŞLEŞME REFLEKSİ"), unsafe_allow_html=True)
-                        with qc2:
-                            st.markdown(print_q_stats(q_results['cons'], "2. ARDIŞIK SAYI REFLEKSİ"), unsafe_allow_html=True)
-                            st.markdown(print_q_stats(q_results['devir'], "4. DEVİR REFLEKSİ"), unsafe_allow_html=True)
+            with tab_simulasyon:
+                st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🎯 GELECEK HAFTA PROJEKSİYONU (YAPAY ZEKA TAHMİNİ)</h3>", unsafe_allow_html=True)
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #0ea5e9; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.15rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                    Bu motor, son çekilişin 6 farklı DNA özelliğini alır, oyunun tüm geçmişini tarar ve tarihte bu özelliklerden sonra en yüksek ihtimalle nelerin geldiğini hesaplar.
+                </div>
+                """, unsafe_allow_html=True)
+                
+                history_sim = []
+                for i in range(len(valid_draws)):
+                    d = valid_draws[i]
+                    dev_durum = "Bilinmiyor"
+                    if i + 1 < len(valid_draws):
+                        dev_durum = get_dev(valid_draws[i+1], d)
+                    
+                    history_sim.append({
+                        'freq': get_f_pattern(d),
+                        'oe': get_tc(d),
+                        'cons': get_ard(d),
+                        'root': get_k(d),
+                        'bolge': get_bolge_pattern_sl(d),
+                        'devir': dev_durum
+                    })
+                
+                last_sim = history_sim[0] 
+                
+                def render_transition(prop_key, target_val, title):
+                    next_states = []
+                    for i in range(1, len(history_sim)):
+                        if history_sim[i][prop_key] == target_val:
+                            next_states.append(history_sim[i-1][prop_key])
+                    
+                    html_str = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; box-shadow:0 4px 6px rgba(0,0,0,0.05); height:100%;'>"
+                    html_str += f"<h5 style='color:#0f172a; font-weight:900; font-size:15px; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
+                    html_str += f"<p style='font-size:12px; color:#64748b; margin-bottom:10px;'>Son Çekiliş: <b style='color:#059669;'>{target_val}</b></p>"
+                    
+                    if not next_states:
+                        html_str += "<span style='color:#64748b; font-size:13px;'>Tarihte örnek bulunamadı.</span></div>"
+                        return html_str
+                    
+                    c = Counter(next_states)
+                    total = len(next_states)
+                    html_str += "<ul style='margin-bottom:0; padding-left:20px; font-size:14px;'>"
+                    for k, v in c.most_common(3): 
+                        pct = (v/total)*100
+                        html_str += f"<li style='margin-bottom:5px;'><b>%{pct:.1f}</b> ihtimalle <span style='color:#059669; font-weight:bold;'>{k}</span></li>"
+                    html_str += "</ul></div>"
+                    return html_str
+
+                st.markdown(f"<h5 style='color:#059669; margin-bottom:15px;'>🔍 SON ÇEKİLİŞ ({valid_draws[0]}) BAZ ALINARAK YAPILAN MARKOV HESAPLAMALARI:</h5>", unsafe_allow_html=True)
+                
+                sc1, sc2, sc3 = st.columns(3)
+                with sc1:
+                    st.markdown(render_transition('freq', last_sim['freq'], "1. Frekans Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('devir', last_sim['devir'], "4. Devir Radarı"), unsafe_allow_html=True)
+                with sc2:
+                    st.markdown(render_transition('bolge', last_sim['bolge'], "2. Bölge Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('cons', last_sim['cons'], "5. Ardışık Radarı"), unsafe_allow_html=True)
+                with sc3:
+                    st.markdown(render_transition('oe', last_sim['oe'], "3. Tek/Çift Radarı"), unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(render_transition('root', last_sim['root'], "6. Kök Eşleşme Radarı"), unsafe_allow_html=True)
+                    
+                st.markdown("<hr style='border: 2px dashed #cbd5e1; margin: 25px 0;'>", unsafe_allow_html=True)
+                st.markdown("#### 🚨 KRİTİK İSTİHBARAT: 'SAYI KESİLME' ALGORİTMASI")
+                
+                streak_3_count = 0
+                streak_4_count = 0
+                for num in range(1, 61):
+                    for i in range(3, len(valid_draws)):
+                        if num in valid_draws[i] and num in valid_draws[i-1] and num in valid_draws[i-2]:
+                            streak_3_count += 1
+                            if num in valid_draws[i-3]:
+                                streak_4_count += 1
+                                
+                if streak_3_count > 0:
+                    perc_devam = (streak_4_count / streak_3_count) * 100
+                    perc_kesilme = 100 - perc_devam
+                    st.markdown(f"""
+                    <div style='background-color: #fff1f2; border: 2px solid #ef4444; padding: 15px; border-radius: 8px; color: #7f1d1d;'>
+                        Süper Loto tarihinde herhangi bir sayının <b>3 hafta ÜST ÜSTE çıkma durumu tam {streak_3_count} kez</b> yaşanmıştır.<br><br>
+                        Algoritmanın tespitine göre, 3 hafta üst üste çıkan bir sayının <b>4. HAFTA KESİN OLARAK KESİLME (GELMEME) ihtimali: <span style='font-size:22px; font-weight:900;'>%{perc_kesilme:.2f}</span></b>'dir.<br>
+                        <span style='font-size:14px; color:#991b1b;'><i>(Kupon yaparken, son 3 haftadır çıkan bir sayı varsa onu <b>%{perc_kesilme:.2f} matematiksel güvence ile</b> eleyebilirsiniz.)</i></span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("Süper Loto tarihinde henüz hiçbir sayı 3 hafta üst üste çıkmamıştır.")
+
+            with tab_sorgu:
+                st.markdown("<h3 style='color:#0f172a; font-weight:900; margin-bottom:15px;'>🕵️‍♂️ DİNAMİK İSTİHBARAT SORGUSU</h3>", unsafe_allow_html=True)
+                st.markdown("""
+                <div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #8b5cf6; padding: 18px 20px; margin-bottom: 25px; border-radius: 6px; color: #000000; font-size: 1.10rem; font-weight: 700; line-height: 1.6; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                    Makinenin sinir uçlarına bağlanın. Veritabanındaki en popüler şablonları inceleyin ve kendi belirlediğiniz frekans senaryosunun ardından yaşanacakları simüle edin.
+                </div>
+                """, unsafe_allow_html=True)
+
+                all_freqs = [get_f_pattern(d) for d in valid_draws]
+                freq_counts = Counter(all_freqs)
+                
+                st.markdown("#### 📊 VERİTABANINDAKİ EN POPÜLER FREKANS ŞABLONLARI")
+                pop_html = "<div style='display:flex; flex-wrap:wrap; gap:10px; margin-bottom:30px;'>"
+                for f, c in freq_counts.most_common(5):
+                    pop_html += f"<div style='background-color:#ffffff; border:2px solid #cbd5e1; padding:10px 15px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05); text-align:center;'><b>{f}</b><br><span style='color:#059669; font-weight:900; font-size:14px;'>{c} Kez Yaşandı</span></div>"
+                pop_html += "</div>"
+                st.markdown(pop_html, unsafe_allow_html=True)
+
+                st.markdown("#### 🔍 HEDEF FREKANSI BELİRLEYİN")
+                cq1, cq2, cq3 = st.columns(3)
+                with cq1:
+                    st.markdown("<div style='background-color:#fef2f2; border:2px solid #ef4444; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#b91c1c; font-size:16px; margin-bottom:5px;'>🔥 SICAK (S)</div>", unsafe_allow_html=True)
+                    q_s = st.number_input("Sıcak", 0, 6, 2, key="sl_q_s", label_visibility="collapsed")
+                with cq2:
+                    st.markdown("<div style='background-color:#f0f9ff; border:2px solid #3b82f6; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#1d4ed8; font-size:16px; margin-bottom:5px;'>🔵 ORTA (O)</div>", unsafe_allow_html=True)
+                    q_o = st.number_input("Orta", 0, 6, 3, key="sl_q_o", label_visibility="collapsed")
+                with cq3:
+                    st.markdown("<div style='background-color:#fefce8; border:2px solid #eab308; padding:8px; border-radius:6px; text-align:center; font-weight:900; color:#a16207; font-size:16px; margin-bottom:5px;'>❄️ SOĞUK (C)</div>", unsafe_allow_html=True)
+                    q_c = st.number_input("Soğuk", 0, 6, 1, key="sl_q_c", label_visibility="collapsed")
+                    
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if st.button("🚀 DİNAMİK İSTİHBARATI GETİR", type="primary", use_container_width=True, key="sl_sq_btn"):
+                    if q_s + q_o + q_c != 6:
+                        st.error("⚠️ HATA: Sıcak, Orta ve Soğuk sayılarının toplamı tam 6 olmalıdır!")
+                    else:
+                        target_f_str = f"{q_s}S - {q_o}O - {q_c}C"
+                        q_results = {'oe': [], 'cons': [], 'root': [], 'bolge': [], 'devir': []}
+                        match_count = 0
+                        
+                        for i in range(1, len(valid_draws)):
+                            if get_f_pattern(valid_draws[i]) == target_f_str:
+                                match_count += 1
+                                trigger_draw = valid_draws[i]
+                                next_draw = valid_draws[i-1]
+                                
+                                q_results['oe'].append(get_tc(next_draw))
+                                q_results['cons'].append(get_ard(next_draw))
+                                q_results['root'].append(get_k(next_draw))
+                                q_results['bolge'].append(get_bolge_pattern_sl(next_draw))
+                                q_results['devir'].append(get_dev(trigger_draw, next_draw))
+                        
+                        if match_count == 0:
+                            st.warning(f"Veritabanında '{target_f_str}' frekansının gelip de ardından çekiliş yapılan bir kayıt bulunamadı.")
+                        else:
+                            st.success(f"✅ HEDEF KİLİTLENDİ: Tarihte '{target_f_str}' şablonundan SONRAKİ HAFTA tam {match_count} kez çekiliş yapılmıştır. Makinenin gösterdiği refleksler aşağıdadır:")
                             
-                        st.info("💡 KAPTAN'A NOT: En yüksek yüzdeler, makinenin bu frekansa verdiği tepkidir. Kolonları kurarken en üst sıradaki şablonları baz al.")
+                            def print_q_stats(data_list, title):
+                                c = Counter(data_list)
+                                total = len(data_list)
+                                html = f"<div style='background-color:#ffffff; padding:15px; border-radius:8px; border:2px solid #e2e8f0; margin-bottom:15px; box-shadow:0 4px 6px rgba(0,0,0,0.05);'>"
+                                html += f"<h5 style='color:#0f172a; font-weight:900; border-bottom:2px solid #f1f5f9; padding-bottom:8px; margin-top:0;'>{title}</h5>"
+                                for k, v in c.most_common():
+                                    perc = (v / total) * 100
+                                    html += f"<div style='display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px dashed #f1f5f9; padding-bottom:4px;'><span style='font-weight:bold; color:#334155; font-size:14px;'>{k}</span> <span style='color:#059669; font-weight:900; font-size:15px;'>%{perc:.2f}</span></div>"
+                                html += "</div>"
+                                return html
 
-        # --- SAYFA SONU (ALT) ÜRETİM BUTONU ---
-        st.markdown("<br><hr style='border: 2px dashed #cbd5e1; margin-top: 30px; margin-bottom: 20px;'>", unsafe_allow_html=True)
-        
-        if not st.session_state.sl_uretim_ekrani_acik:
-            st.markdown("<p style='text-align: center; color: #64748b; font-size:15px; font-weight:bold; margin-bottom:15px;'>Tüm analizleri incelediyseniz motoru ateşleyebilirsiniz 👇</p>", unsafe_allow_html=True)
-            c_alt_sol, c_alt_orta, c_alt_sag = st.columns([1, 2, 1])
-            with c_alt_orta:
-                if st.button("🚀 YAPAY ZEKA ÖĞRENMESİYLE KUSURSUZ KOLONU ÜRET", type="primary", use_container_width=True, key="alt_uretim_btn_super"):
-                    st.session_state.sl_uretim_ekrani_acik = True
-                    st.rerun()
+                            qc1, qc2 = st.columns(2)
+                            with qc1:
+                                st.markdown(print_q_stats(q_results['oe'], "1. TEK/ÇİFT REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['bolge'], "3. BÖLGE (ALT-ORTA-ÜST) REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['root'], "5. KÖK EŞLEŞME REFLEKSİ"), unsafe_allow_html=True)
+                            with qc2:
+                                st.markdown(print_q_stats(q_results['cons'], "2. ARDIŞIK SAYI REFLEKSİ"), unsafe_allow_html=True)
+                                st.markdown(print_q_stats(q_results['devir'], "4. DEVİR REFLEKSİ"), unsafe_allow_html=True)
+                                
+                            st.info("💡 KAPTAN'A NOT: En yüksek yüzdeler, makinenin bu frekansa verdiği tepkidir. Kolonları kurarken en üst sıradaki şablonları baz al.")
+           
 # ==========================================
 # 🟡 4. MODÜL: ON NUMARA
 # ==========================================
@@ -3280,38 +4131,4 @@ if selected_game == "ANA SAYFA":
     # Tam ortaya konumlandırmak için 3 sütun kullanıyoruz (1 birim boşluk, 2 birim panel, 1 birim boşluk)
     col_bos1, col_admin, col_bos2 = st.columns([1, 2, 1])
     
-    with col_admin:
-        # st.sidebar.expander yerine st.expander kullanıyoruz ki ana sayfada çıksın
-        with st.expander("🔒 Admin - Otopilot", expanded=False):
-            st.markdown("<p style='font-size: 13px; color: #64748b; text-align: center;'>Veritabanını buradan güncelleyin.</p>", unsafe_allow_html=True)
-            admin_pass = st.text_input("Şifre:", type="password", key="admin_pwd")
-            if admin_pass == "kaptan":
-                st.success("Otopilot Aktif!")
-                yeni_sayilar = st.text_input("Sayılar (Örn: 4, 15, 22, 28, 31):")
-                c_btn1, c_btn2 = st.columns(2)
-                with c_btn1:
-                    if st.button("💾 Kaydet", use_container_width=True):
-                        if yeni_sayilar:
-                            try:
-                                nums = [int(x.strip()) for x in yeni_sayilar.split(',') if x.strip().isdigit()]
-                                if len(nums) >= 5:
-                                    nums_sorted = sorted(nums)
-                                    new_df = pd.DataFrame([nums_sorted])
-                                    if os.path.exists("otopilot_veriler.csv"):
-                                        existing = pd.read_csv("otopilot_veriler.csv", header=None)
-                                        new_df = pd.concat([new_df, existing], ignore_index=True)
-                                    new_df.to_csv("otopilot_veriler.csv", index=False, header=False)
-                                    st.cache_data.clear()
-                                    st.success(f"Başarılı! Sisteme işlendi.")
-                                    time.sleep(1.5)
-                                    st.rerun()
-                                else: st.warning("Eksik sayı.")
-                            except: st.error("Hatalı format.")
-                with c_btn2:
-                    if os.path.exists("otopilot_veriler.csv"):
-                        if st.button("🗑️ Sıfırla", use_container_width=True):
-                            os.remove("otopilot_veriler.csv")
-                            st.cache_data.clear()
-                            st.success("Temizlendi!")
-                            time.sleep(1.5)
-                            st.rerun()
+   
