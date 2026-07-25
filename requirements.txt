@@ -6,6 +6,9 @@ requests
 beautifulsoup4
 plotly
 cloudscraper
+numpy
+streamlit-option-menu
+
 
 
 
