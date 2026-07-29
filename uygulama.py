@@ -1739,8 +1739,8 @@ elif selected_game == "ÇILGIN SAYISAL LOTO AI":
                                 def kayit_tetikleyici(k_email, k_oyun_id, k_oyun_adi, k_kombinasyonlar):
                                     if st.session_state.get("onay_kutusu_sysl", False):
                                         for t_kolon in k_kombinasyonlar:
-                                            from datetime import datetime
-                                            z_vakti = datetime.now().strftime("%d.%m.%Y %H:%M:%S") 
+                                            from datetime import datetime, timedelta
+                                            z_vakti = (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M:%S") 
                                             save_coupon_to_db(k_email, k_oyun_id, k_oyun_adi, t_kolon, z_vakti)
                                             time.sleep(0.1)
 
@@ -2664,8 +2664,8 @@ elif selected_game == "SÜPER LOTO AI":
                                 def kayit_tetikleyici_super(k_email, k_oyun_id, k_oyun_adi, k_kombinasyonlar):
                                     if st.session_state.get("onay_kutusu_super", False):
                                         for t_kolon in k_kombinasyonlar:
-                                            from datetime import datetime
-                                            z_vakti = datetime.now().strftime("%d.%m.%Y %H:%M:%S") 
+                                            from datetime import datetime, timedelta
+                                            z_vakti = (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M:%S") 
                                             save_coupon_to_db(k_email, k_oyun_id, k_oyun_adi, t_kolon, z_vakti)
                                             time.sleep(0.1)
 
@@ -3705,8 +3705,8 @@ elif selected_game == "ŞANS TOPU AI":
                                 def kayit_tetikleyici_sans(k_email, k_oyun_id, k_oyun_adi, k_kombinasyonlar):
                                     if st.session_state.get("onay_kutusu_sans", False):
                                         for t_kolon in k_kombinasyonlar:
-                                            from datetime import datetime
-                                            z_vakti = datetime.now().strftime("%d.%m.%Y %H:%M:%S") 
+                                            from datetime import datetime, timedelta
+                                            z_vakti = (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M:%S") 
                                             save_coupon_to_db(k_email, k_oyun_id, k_oyun_adi, t_kolon, z_vakti)
                                             time.sleep(0.1)
 
@@ -4640,8 +4640,8 @@ elif selected_game == "ON NUMARA AI":
                                 def kayit_tetikleyici_onnumara(k_email, k_oyun_id, k_oyun_adi, k_kombinasyonlar):
                                     if st.session_state.get("onay_kutusu_onnumara", False):
                                         for t_kolon in k_kombinasyonlar:
-                                            from datetime import datetime
-                                            z_vakti = datetime.now().strftime("%d.%m.%Y %H:%M:%S") 
+                                            from datetime import datetime, timedelta
+                                            z_vakti = (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M:%S") 
                                             save_coupon_to_db(k_email, k_oyun_id, k_oyun_adi, t_kolon, z_vakti)
                                             time.sleep(0.1)
 
