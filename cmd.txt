@@ -1,0 +1,1 @@
+Bunu kaydedip kapattıktan sonra siyah ekrana (CMD) dönüp sırasıyla pip install openpyxl ve python -m streamlit run uygulama.py komutlarını girebilirsin.

@@ -1,0 +1,4 @@
+https://kaptan-ai.streamlit.app/
+python -m streamlit run uygulama.py
+python veri_gocu.py
+api_anahtarim = "f9fcc37306mshb5de75ed0350c52p1a4a7ajsn7962a1699b0f"

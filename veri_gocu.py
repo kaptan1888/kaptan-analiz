@@ -14,8 +14,9 @@ cursor.execute('CREATE TABLE super_loto (id INTEGER PRIMARY KEY AUTOINCREMENT, t
 cursor.execute('DROP TABLE IF EXISTS sans_topu')
 cursor.execute('CREATE TABLE sans_topu (id INTEGER PRIMARY KEY AUTOINCREMENT, t1 INTEGER, t2 INTEGER, t3 INTEGER, t4 INTEGER, t5 INTEGER, arti INTEGER)')
 
+# 🎯 DİKKAT: Sayısal Loto tablosuna joker ve superstar sütunları eklendi
 cursor.execute('DROP TABLE IF EXISTS sayisal_loto')
-cursor.execute('CREATE TABLE sayisal_loto (id INTEGER PRIMARY KEY AUTOINCREMENT, t1 INTEGER, t2 INTEGER, t3 INTEGER, t4 INTEGER, t5 INTEGER, t6 INTEGER)')
+cursor.execute('CREATE TABLE sayisal_loto (id INTEGER PRIMARY KEY AUTOINCREMENT, t1 INTEGER, t2 INTEGER, t3 INTEGER, t4 INTEGER, t5 INTEGER, t6 INTEGER, joker INTEGER, superstar INTEGER)')
 
 cursor.execute('DROP TABLE IF EXISTS on_numara')
 cursor.execute('''CREATE TABLE on_numara (
@@ -81,13 +82,18 @@ try:
         try:
             raw_vals = row.iloc[2:8].values
             nums = [int(float(str(x).replace(',', '.').strip())) for x in raw_vals if str(x).replace(',', '.').strip().isdigit()]
-            main_balls = [x for x in nums if 1 <= x <= 90]
+            main_balls = sorted([x for x in nums if 1 <= x <= 90])
+            
+            # 🎯 DİKKAT: Excel'den Joker ve SüperStar sütunları da SQL'e eklenmek üzere çekiliyor
+            joker = int(float(str(row.iloc[8]).replace(',', '.').strip())) if pd.notna(row.iloc[8]) and str(row.iloc[8]).replace(',', '.').strip().isdigit() else 0
+            superstar = int(float(str(row.iloc[9]).replace(',', '.').strip())) if pd.notna(row.iloc[9]) and str(row.iloc[9]).replace(',', '.').strip().isdigit() else 0
+
             if len(main_balls) == 6:
-                t = tuple(sorted(main_balls))
+                t = tuple(main_balls + [joker, superstar])
                 if t not in sayisal_cekilisler: sayisal_cekilisler.append(t)
         except: continue
     sayisal_cekilisler.reverse()
-    cursor.executemany('INSERT INTO sayisal_loto (t1, t2, t3, t4, t5, t6) VALUES (?, ?, ?, ?, ?, ?)', sayisal_cekilisler)
+    cursor.executemany('INSERT INTO sayisal_loto (t1, t2, t3, t4, t5, t6, joker, superstar) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', sayisal_cekilisler)
     print(f"✅ ÇILGIN SAYISAL: {len(sayisal_cekilisler)} çekiliş SQL'e kazındı.")
 except Exception as e: print(f"🚨 ÇILGIN SAYISAL HATASI: {e}")
 

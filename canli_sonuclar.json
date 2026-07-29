@@ -1,0 +1,105 @@
+{
+    "sayisal": {
+        "cekilis_no": "89",
+        "tarih": "27.07.2026",
+        "nums": [
+            4,
+            9,
+            20,
+            45,
+            48,
+            59
+        ],
+        "buyuk_tutar": "21.Devir\tKişi Başına Düşen İkramiye :\t493.351.089,28 TL",
+        "buyuk_kisi": "",
+        "bilen_5": "1\tKişi Başına Düşen İkramiye :\t2.989.867,10 TL",
+        "bilen_4": "291\tKişi Başına Düşen İkramiye :\t10.274,45 TL",
+        "bilen_3": "9.137\tKişi Başına Düşen İkramiye :\t818,05 TL",
+        "bilen_2": "135.077\tKişi Başına Düşen İkramiye :\t83,00 TL",
+        "joker": 66,
+        "superstar": 57
+    },
+    "super": {
+        "date": "Güncel Çekiliş",
+        "nums": [],
+        "status": "Bekleniyor",
+        "prize_html": ""
+    },
+    "sans": {
+        "date": "Güncel Çekiliş",
+        "nums": [],
+        "plus": "",
+        "status": "Bekleniyor",
+        "prize_html": ""
+    },
+    "onnumara": {
+        "cekilis_no": "60",
+        "tarih": "27.07.2026",
+        "nums": [
+            1,
+            2,
+            6,
+            9,
+            10,
+            21,
+            30,
+            32,
+            38,
+            40,
+            42,
+            47,
+            53,
+            54,
+            58,
+            59,
+            61,
+            62,
+            68,
+            70,
+            72,
+            73
+        ],
+        "buyuk_tutar": "10\tKazanan Kişi Sayısı\t3.Devir\tKişi Başına Düşen İkramiye :\t3.507.085,35 TL\t",
+        "buyuk_kisi": "",
+        "bilen_5": "",
+        "bilen_4": "",
+        "bilen_3": "",
+        "bilen_2": ""
+    },
+    "superloto": {
+        "cekilis_no": "90",
+        "tarih": "28.07.2026",
+        "nums": [
+            3,
+            6,
+            24,
+            50,
+            51,
+            53
+        ],
+        "buyuk_tutar": "16.Devir - 197.300.158,95 TL\t",
+        "buyuk_kisi": "",
+        "bilen_5": "18\tKişi Başına Düşen İkramiye :\t159.693,85 TL",
+        "bilen_4": "808\tKişi Başına Düşen İkramiye :\t5.533,90 TL\t",
+        "bilen_3": "20.354\tKişi Başına Düşen İkramiye :\t266,75 TL",
+        "bilen_2": "205.158\tKişi Başına Düşen İkramiye :\t28,00 TL"
+    },
+    "sanstopu": {
+        "cekilis_no": "59",
+        "tarih": "26.07.2026",
+        "nums": [
+            13,
+            15,
+            17,
+            18,
+            20
+        ],
+        "buyuk_tutar": "14.545.036,30 TL\t",
+        "buyuk_kisi": "1",
+        "bilen_5": "5\tKazanan Kişi Sayısı\t4\tKişi Başına Düşen İkramiye :\t68.297,70 TL\t",
+        "bilen_4": "4\tKazanan Kişi Sayısı\t1.158\tKişi Başına Düşen İkramiye :\t294,85 TL\t",
+        "bilen_3": "3\tKazanan Kişi Sayısı\t31.013\tKişi Başına Düşen İkramiye :\t52,85 TL",
+        "bilen_2": "",
+        "plus": 13
+    }
+}
