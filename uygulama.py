@@ -179,28 +179,31 @@ def save_coupon_to_db(email, game_id, game_name, nums, timestamp):
     conn.close()
 
 def get_user_coupons(email):
+    import sqlite3
     conn = sqlite3.connect('kuantum_users.db')
     c = conn.cursor()
-    c.execute("SELECT game_id, game_name, nums, timestamp FROM coupons WHERE user_email=? ORDER BY id DESC", (email,))
+    # 🎯 SİHİR BURADA: Artık sadece numaraları değil, gizli 'id' numarasını da çekiyoruz!
+    c.execute("SELECT id, game_id, game_name, nums, timestamp FROM coupons WHERE user_email=? ORDER BY id DESC", (email,))
     coupons = c.fetchall()
     conn.close()
     parsed_coupons = []
     for cp in coupons:
-        nums_list = [int(n) for n in cp[2].split(",")]
-        parsed_coupons.append({"game": cp[0], "game_name": cp[1], "nums": nums_list, "timestamp": cp[3]})
+        nums_list = [int(n) for n in cp[3].split(",")]
+        # Çekilen ID'yi de (cp[0]) listeye ekliyoruz
+        parsed_coupons.append({"id": cp[0], "game": cp[1], "game_name": cp[2], "nums": nums_list, "timestamp": cp[4]})
     return parsed_coupons
-# 👇 İŞTE TAM BURAYA, DİĞERLERİNİN HEMEN ALTINA YENİ KODU YAPIŞTIRIYORUZ:
-def delete_coupon_from_db(email, game_id, timestamp):
-    import sqlite3 
-    # BAĞLANTI DOSYASININ ADI GERÇEK DOSYANA (kuantum_users.db) GÖRE DÜZELTİLDİ
-    conn = sqlite3.connect('kuantum_users.db') 
-    cursor = conn.cursor()
-    
-    # GERÇEK TABLO ADI (coupons) VE SÜTUN ADLARI
-    cursor.execute('''DELETE FROM coupons WHERE user_email=? AND game_id=? AND timestamp=?''', (email, game_id, timestamp))
-    
-    conn.commit()
-    conn.close()
+
+def delete_coupon_from_db(kasa_id):
+    import sqlite3
+    try:
+        conn = sqlite3.connect('kuantum_users.db')
+        cursor = conn.cursor()
+        # 🎯 LAZER GÜDÜMÜ: Sadece ve sadece tıklanan o benzersiz ID'yi yok et!
+        cursor.execute("DELETE FROM coupons WHERE id=?", (kasa_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Silme Hatası: {e}")
 # --- VERİ ÇEKME FONKSİYONLARI ---
 @st.cache_data(ttl=60)
 def get_live_results():
@@ -629,12 +632,9 @@ if selected_game == "VIP GİRİŞ MERKEZİ":
 live_data = load_live_data()
 
 if selected_game.upper() == "ANA SAYFA":
-    # 🎯 Akıllı Buton Dedektifi: Arşiv metninden veya güncel çekilişten Numarayı bulup butona yazar
     import re
     def get_prev_btn_label(opts, idx, current_c_no=""):
-        if idx == 0 and current_c_no and current_c_no.isdigit():
-            return f"◀ Önceki ({int(current_c_no) - 1})"
-        
+        if idx == 0 and current_c_no and str(current_c_no).isdigit(): return f"◀ Önceki ({int(current_c_no) - 1})"
         if idx + 1 >= len(opts): return "◀ Önceki"
         txt = str(opts[idx + 1])
         m = re.search(r'(?:\[(\d+)\]|(\d+)\.Çekiliş)', txt)
@@ -642,6 +642,17 @@ if selected_game.upper() == "ANA SAYFA":
             num = m.group(1) if m.group(1) else m.group(2)
             return f"◀ Önceki ({num})"
         return "◀ Önceki"
+
+    # 💎 RESMİ İKRAMİYE FORMATLAYICI
+    def fmt(metin):
+        if not metin or str(metin).strip() in ["", "-", "0"]: return "<b>0 Kişi</b>", "<b>-</b>"
+        parts = str(metin).split("-")
+        if len(parts) >= 2:
+            kisi = parts[0].strip()
+            tutar = parts[1].strip()
+            kisi_renk = "#e61532" if "Devir" in kisi or "devir" in kisi.lower() else "#334155"
+            return f"<b style='color:{kisi_renk};'>{kisi}</b>", f"<span style='color:#10b981; font-weight:bold;'>{tutar}</span>"
+        return f"<b style='color:#334155;'>{metin}</b>", "<b>-</b>"
 
     st.markdown("<style>.home-ball, .home-onnumara-ball {width: 30px !important; height: 30px !important; line-height: 30px !important; font-size: 13px !important; margin: 2px !important;}</style>", unsafe_allow_html=True)
     st.markdown("""<div style="background: linear-gradient(to right, #0f172a, #1e3a8a); padding: 20px; border-radius: 10px; margin-bottom: 25px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); border-top: 4px solid #3b82f6; text-align: center;"><h2 style="color: #ffffff; margin: 0; font-weight: 900; letter-spacing: 1px; font-size: 1.5rem;">🌐 YAPAY ZEKA ALGORİTMALARI</h2><p style="color: #94a3b8; font-size: 14px; margin: 5px 0 0 0; font-weight: 500;">Canlı Çekiliş Sonuçları ve Kuantum Arşiv Senkronizasyonu</p></div>""", unsafe_allow_html=True)
@@ -660,40 +671,46 @@ if selected_game.upper() == "ANA SAYFA":
         c_tar = mevcut_sayisal.get("tarih", "")
         
         v_draws, j_draws, ss_draws, _ = load_sayisal_ai_data()
-        archive_data = sayisal_archive
         
-        # Dropdown Menüsü Dinamik Başlığı
         sayisal_opts_0 = f"🌐 {c_no}. Çekiliş (Güncel)" if c_no else "🌐 Güncel Ekran"
         sayisal_opts = [sayisal_opts_0]
         
-        api_farki = len(v_draws) - len(archive_data) if archive_data else len(v_draws)
+        c_no_int = int(c_no) if c_no and str(c_no).isdigit() else 0
+        archive_dict = {}
+        if sayisal_archive:
+            for arch in sayisal_archive:
+                m = re.search(r'(\d+)\.\s*Çekiliş', arch.get('display_name', ''))
+                if m: archive_dict[int(m.group(1))] = arch['display_name']
+                
         if v_draws:
             for i in range(1, len(v_draws)):
-                if archive_data and i > api_farki: sayisal_opts.append(archive_data[i - api_farki - 1]['display_name'])
-                else: sayisal_opts.append(f"🗄️ Son Eklenen Kayıt [{st.session_state.get('son_tarih_sayisal', 'Yeni') if i == 1 else f'Yeni-{i}'}]")
+                if c_no_int > 0:
+                    hedef = c_no_int - i
+                    sayisal_opts.append(archive_dict.get(hedef, f"🗄️ {hedef}. Çekiliş"))
+                else:
+                    sayisal_opts.append(f"🗄️ Arşiv (Sondan {i}.)")
 
         if "ana_sayisal_idx" not in st.session_state: st.session_state.ana_sayisal_idx = 0
         secilen_idx = st.session_state.ana_sayisal_idx
         if secilen_idx >= len(sayisal_opts): secilen_idx = 0
         
-        if not v_draws or len(v_draws) == 0:
-            s_nums, s_plus, s_ss, s_date = [], "", "", "Sistemde Kayıt Bulunmuyor"
-            s_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+        s_nums = mevcut_sayisal.get("nums", v_draws[0] if v_draws else []) if secilen_idx == 0 else (v_draws[secilen_idx] if len(v_draws) > secilen_idx else [])
+        s_plus = mevcut_sayisal.get("joker", j_draws[0] if j_draws else "") if secilen_idx == 0 else (j_draws[secilen_idx] if len(j_draws) > secilen_idx else "")
+        s_ss = mevcut_sayisal.get("superstar", ss_draws[0] if ss_draws else "") if secilen_idx == 0 else (ss_draws[secilen_idx] if len(ss_draws) > secilen_idx else "")
+
+        if secilen_idx == 0 and s_nums:
+            s_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
+            s_date = f"⏳ {c_no}. Çekiliş - {c_tar}" if (c_no and c_tar) else (f"⏳ {c_no}. Çekiliş" if c_no else "⏳ Sistemden En Güncel Kayıt")
+        elif s_nums:
+            s_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
+            s_date = sayisal_opts[secilen_idx]
         else:
-            s_nums = v_draws[secilen_idx] 
-            s_plus = j_draws[secilen_idx] if len(j_draws) > secilen_idx else ""
-            s_ss = ss_draws[secilen_idx] if len(ss_draws) > secilen_idx else ""
-            if secilen_idx == 0:
-                s_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
-                # Kum saati ile birlikte Çekiliş Numarası
-                s_date = f"⏳ {c_no}. Çekiliş - {c_tar}" if (c_no and c_tar) else (f"⏳ {c_no}. Çekiliş" if c_no else "⏳ Sistemden En Güncel Kayıt")
-            else:
-                s_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
-                s_date = sayisal_opts[secilen_idx]
+            s_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+            s_date = "Kayıt Bulunmuyor"
 
         sayisal_html = "".join([f"<div class='home-ball ball-blue'>{n}</div>" for n in s_nums]) if s_nums else "<span style='color:#94a3b8; font-size:13px; font-style:italic;'>Bekleniyor...</span>"
-        plus_html = f"<div class='home-ball ball-green'>{s_plus}</div>" if s_plus and str(s_plus) not in ["-", "0"] else ""
-        ss_html = f"<div class='home-ball ball-red'>{s_ss}</div>" if s_ss and str(s_ss) not in ["-", "0"] else ""
+        plus_html = f"<div class='home-ball ball-green'>{s_plus}</div>" if s_plus and str(s_plus) not in ["-", "0", ""] else ""
+        ss_html = f"<div class='home-ball ball-red'>{s_ss}</div>" if s_ss and str(s_ss) not in ["-", "0", ""] else ""
         
         st.markdown(f"""<div style='background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #e61532; margin-bottom: 10px;'><div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px; margin-bottom: 12px;'><span style='font-size: 1rem; font-weight: 800; color: #e61532;'>ÇILGIN SAYISAL LOTO</span>{s_status}</div><div style='text-align: center; color: #64748b; font-weight: 600; margin-bottom: 12px; font-size:13px;'>{s_date}</div><div style='display: flex; justify-content: center; align-items: center; gap: 3px; margin-bottom: 12px; flex-wrap: wrap;'>{sayisal_html} <span style='font-size: 18px; color: #cbd5e1; font-weight: 900; margin: 0 4px;'>+</span> {plus_html}</div><div style='text-align: center; background-color:#f8fafc; padding:8px; border-radius:6px; display: flex; justify-content: center; align-items: center; gap: 10px;'><span style='color: #e61532; font-weight: 800; font-size: 0.9rem;'>SÜPERSTAR</span>{ss_html}</div></div>""", unsafe_allow_html=True)
         h_col1, h_col2 = st.columns([1, 3])
@@ -705,34 +722,39 @@ if selected_game.upper() == "ANA SAYFA":
             if sayisal_opts.index(sel) != secilen_idx: st.session_state.ana_sayisal_idx = sayisal_opts.index(sel); st.rerun()
         
         with st.expander("💰 Kazananlar ve İkramiye Tablosu"):
-            if secilen_idx == 0 and mevcut_sayisal and mevcut_sayisal.get("buyuk_tutar"):
+            aktif_detay = None
+            m_c = re.search(r'(\d+)\.\s*Çekiliş', sayisal_opts[secilen_idx])
+            hedef_c_no = m_c.group(1) if m_c else None
+            
+            if hedef_c_no and "sayisal_history" in live_data and hedef_c_no in live_data["sayisal_history"]:
+                aktif_detay = live_data["sayisal_history"][hedef_c_no]
+            elif secilen_idx == 0:
+                aktif_detay = mevcut_sayisal
+                
+            if aktif_detay and aktif_detay.get("bilen_6"):
                 st.markdown(f"""
                 <div style="background-color: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin-top: 5px;">
                     <table style="width:100%; text-align:left; border-collapse: collapse; font-size: 13px;">
                         <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
                             <th style="padding: 10px; color:#475569;">Bilen</th>
-                            <th style="padding: 10px; color:#475569;">Kazananlar & İkramiye Tutarı</th>
+                            <th style="padding: 10px; color:#475569;">Kazanan Kişi Sayısı</th>
+                            <th style="padding: 10px; color:#475569;">Kişi Başına Düşen İkramiye</th>
                         </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#ef4444;">6 Bilen</td>
-                            <td style="padding: 10px;"><b>{mevcut_sayisal.get('buyuk_kisi', '-')}</b> / <span style="color:#10b981; font-weight:bold;">{mevcut_sayisal.get('buyuk_tutar', '-')}</span></td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">5 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sayisal.get('bilen_5', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">4 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sayisal.get('bilen_4', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">3 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sayisal.get('bilen_3', '-')}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">2 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sayisal.get('bilen_2', '-')}</td>
-                        </tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#ef4444;">6 Bilen</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_6'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_6'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">5+1 Bilen</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_5_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_5_1'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">5 Bilen</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_5'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_5'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">4 Bilen</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_4'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_4'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">3 Bilen</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_3'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_3'))[1]}</td></tr>
+                        <tr style="border-bottom: 2px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">2 Bilen</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_2'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('bilen_2'))[1]}</td></tr>
+                        <tr><td colspan="3" style="background:#b91c1c; color:white; font-weight:bold; text-align:center; padding:6px; font-size:12px; letter-spacing:1px;">SÜPERSTAR KAZANAN KATEGORİLER</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">6+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_6'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_6'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">5+1+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_5_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_5_1'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">5+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_5'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_5'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">4+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_4'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_4'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">3+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_3'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_3'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">2+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_2'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_2'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">1+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_1'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">0+SüperStar</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_0'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay.get('ss_0'))[1]}</td></tr>
                     </table>
                 </div>
                 """, unsafe_allow_html=True)
@@ -746,32 +768,40 @@ if selected_game.upper() == "ANA SAYFA":
         c_tar_sup = mevcut_super.get("tarih", "")
         
         v_draws_super, msg_super = load_super_ai_data()
-        archive_super = super_archive
         
         super_opts_0 = f"🌐 {c_no_sup}. Çekiliş (Güncel)" if c_no_sup else "🌐 Güncel Ekran"
         super_opts = [super_opts_0]
         
-        api_farki_sup = len(v_draws_super) - len(archive_super) if archive_super else len(v_draws_super)
+        c_no_int_sup = int(c_no_sup) if c_no_sup and str(c_no_sup).isdigit() else 0
+        archive_dict_sup = {}
+        if super_archive:
+            for arch in super_archive:
+                m = re.search(r'(\d+)\.\s*Çekiliş', arch.get('display_name', ''))
+                if m: archive_dict_sup[int(m.group(1))] = arch['display_name']
+                
         if v_draws_super:
             for i in range(1, len(v_draws_super)):
-                if archive_super and i > api_farki_sup: super_opts.append(archive_super[i - api_farki_sup - 1]['display_name'])
-                else: super_opts.append(f"🗄️ Son Eklenen Kayıt (Sondan {i}.)")
+                if c_no_int_sup > 0:
+                    hedef = c_no_int_sup - i
+                    super_opts.append(archive_dict_sup.get(hedef, f"🗄️ {hedef}. Çekiliş"))
+                else:
+                    super_opts.append(f"🗄️ Arşiv (Sondan {i}.)")
 
         if "ana_super_idx" not in st.session_state: st.session_state.ana_super_idx = 0
         secilen_idx_sup = st.session_state.ana_super_idx
         if secilen_idx_sup >= len(super_opts): secilen_idx_sup = 0
         
-        if not v_draws_super or len(v_draws_super) == 0:
-            su_nums, su_date = [], "Sistemde Kayıt Bulunmuyor"
-            su_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+        su_nums = mevcut_super.get("nums", v_draws_super[0] if v_draws_super else []) if secilen_idx_sup == 0 else (v_draws_super[secilen_idx_sup] if len(v_draws_super) > secilen_idx_sup else [])
+
+        if secilen_idx_sup == 0 and su_nums:
+            su_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
+            su_date = f"⏳ {c_no_sup}. Çekiliş - {c_tar_sup}" if (c_no_sup and c_tar_sup) else (f"⏳ {c_no_sup}. Çekiliş" if c_no_sup else "⏳ Sistemden En Güncel Kayıt")
+        elif su_nums:
+            su_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
+            su_date = super_opts[secilen_idx_sup]
         else:
-            su_nums = v_draws_super[secilen_idx_sup]
-            if secilen_idx_sup == 0:
-                su_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
-                su_date = f"⏳ {c_no_sup}. Çekiliş - {c_tar_sup}" if (c_no_sup and c_tar_sup) else (f"⏳ {c_no_sup}. Çekiliş" if c_no_sup else "⏳ Sistemden En Güncel Kayıt")
-            else:
-                su_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
-                su_date = super_opts[secilen_idx_sup]
+            su_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+            su_date = "Kayıt Bulunmuyor"
 
         super_html = "".join([f"<div class='home-ball ball-green'>{n}</div>" for n in su_nums]) if su_nums else "<span style='color:#94a3b8; font-size:13px; font-style:italic;'>Bekleniyor...</span>"
         st.markdown(f"""<div style='background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #059669; margin-bottom: 10px;'><div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px; margin-bottom: 12px;'><span style='font-size: 1rem; font-weight: 800; color: #059669;'>SÜPER LOTO</span>{su_status}</div><div style='text-align: center; color: #64748b; font-weight: 600; margin-bottom: 18px; font-size:13px;'>{su_date}</div><div style='display: flex; justify-content: center; align-items: center; gap: 3px; margin-bottom: 23px; flex-wrap: wrap;'>{super_html}</div></div>""", unsafe_allow_html=True)
@@ -784,34 +814,29 @@ if selected_game.upper() == "ANA SAYFA":
             if super_opts.index(sel_sup) != secilen_idx_sup: st.session_state.ana_super_idx = super_opts.index(sel_sup); st.rerun()
         
         with st.expander("💰 Kazananlar ve İkramiye Tablosu"):
-            if secilen_idx_sup == 0 and mevcut_super and mevcut_super.get("buyuk_tutar"):
+            aktif_detay_sup = None
+            m_c_sup = re.search(r'(\d+)\.\s*Çekiliş', super_opts[secilen_idx_sup])
+            hedef_c_no_sup = m_c_sup.group(1) if m_c_sup else None
+            
+            if hedef_c_no_sup and "superloto_history" in live_data and hedef_c_no_sup in live_data["superloto_history"]:
+                aktif_detay_sup = live_data["superloto_history"][hedef_c_no_sup]
+            elif secilen_idx_sup == 0:
+                aktif_detay_sup = mevcut_super
+                
+            if aktif_detay_sup and aktif_detay_sup.get("bilen_6"):
                 st.markdown(f"""
                 <div style="background-color: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin-top: 5px;">
                     <table style="width:100%; text-align:left; border-collapse: collapse; font-size: 13px;">
                         <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
                             <th style="padding: 10px; color:#475569;">Bilen</th>
-                            <th style="padding: 10px; color:#475569;">Kazananlar & İkramiye Tutarı</th>
+                            <th style="padding: 10px; color:#475569;">Kazanan Kişi Sayısı</th>
+                            <th style="padding: 10px; color:#475569;">Kişi Başına Düşen İkramiye</th>
                         </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#ef4444;">6 Bilen</td>
-                            <td style="padding: 10px;"><b>{mevcut_super.get('buyuk_kisi', '-')}</b> / <span style="color:#10b981; font-weight:bold;">{mevcut_super.get('buyuk_tutar', '-')}</span></td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">5 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_super.get('bilen_5', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">4 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_super.get('bilen_4', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">3 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_super.get('bilen_3', '-')}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">2 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_super.get('bilen_2', '-')}</td>
-                        </tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#ef4444;">6 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_6'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_6'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">5 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_5'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_5'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">4 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_4'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_4'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">3 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_3'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_3'))[1]}</td></tr>
+                        <tr><td style="padding:10px; font-weight:bold; color:#334155;">2 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_2'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sup.get('bilen_2'))[1]}</td></tr>
                     </table>
                 </div>
                 """, unsafe_allow_html=True)
@@ -828,36 +853,44 @@ if selected_game.upper() == "ANA SAYFA":
         c_tar_sans = mevcut_sans.get("tarih", "")
         
         v_draws_sans, p_draws_sans, msg_sans = load_sans_topu_data()
-        archive_sans = sans_archive
         
         sans_opts_0 = f"🌐 {c_no_sans}. Çekiliş (Güncel)" if c_no_sans else "🌐 Güncel Ekran"
         sans_opts = [sans_opts_0]
         
-        api_farki_sans = len(v_draws_sans) - len(archive_sans) if archive_sans else len(v_draws_sans)
+        c_no_int_sans = int(c_no_sans) if c_no_sans and str(c_no_sans).isdigit() else 0
+        archive_dict_sans = {}
+        if sans_archive:
+            for arch in sans_archive:
+                m = re.search(r'(\d+)\.\s*Çekiliş', arch.get('display_name', ''))
+                if m: archive_dict_sans[int(m.group(1))] = arch['display_name']
+                
         if v_draws_sans:
             for i in range(1, len(v_draws_sans)):
-                if archive_sans and i > api_farki_sans: sans_opts.append(archive_sans[i - api_farki_sans - 1]['display_name'])
-                else: sans_opts.append(f"🗄️ Son Eklenen Kayıt (Sondan {i}.)")
+                if c_no_int_sans > 0:
+                    hedef = c_no_int_sans - i
+                    sans_opts.append(archive_dict_sans.get(hedef, f"🗄️ {hedef}. Çekiliş"))
+                else:
+                    sans_opts.append(f"🗄️ Arşiv (Sondan {i}.)")
 
         if "ana_sans_idx" not in st.session_state: st.session_state.ana_sans_idx = 0
         secilen_idx_sans = st.session_state.ana_sans_idx
         if secilen_idx_sans >= len(sans_opts): secilen_idx_sans = 0
         
-        if not v_draws_sans or len(v_draws_sans) == 0:
-            st_nums, st_plus, st_date = [], "", "Sistemde Kayıt Bulunmuyor"
-            st_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+        st_nums = mevcut_sans.get("nums", v_draws_sans[0] if v_draws_sans else []) if secilen_idx_sans == 0 else (v_draws_sans[secilen_idx_sans] if len(v_draws_sans) > secilen_idx_sans else [])
+        st_plus = mevcut_sans.get("plus", p_draws_sans[0] if p_draws_sans else "") if secilen_idx_sans == 0 else (p_draws_sans[secilen_idx_sans] if len(p_draws_sans) > secilen_idx_sans else "")
+
+        if secilen_idx_sans == 0 and st_nums:
+            st_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
+            st_date = f"⏳ {c_no_sans}. Çekiliş - {c_tar_sans}" if (c_no_sans and c_tar_sans) else (f"⏳ {c_no_sans}. Çekiliş" if c_no_sans else "⏳ Sistemden En Güncel Kayıt")
+        elif st_nums:
+            st_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
+            st_date = sans_opts[secilen_idx_sans]
         else:
-            st_nums = v_draws_sans[secilen_idx_sans]
-            st_plus = p_draws_sans[secilen_idx_sans] if len(p_draws_sans) > secilen_idx_sans else ""
-            if secilen_idx_sans == 0:
-                st_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
-                st_date = f"⏳ {c_no_sans}. Çekiliş - {c_tar_sans}" if (c_no_sans and c_tar_sans) else (f"⏳ {c_no_sans}. Çekiliş" if c_no_sans else "⏳ Sistemden En Güncel Kayıt")
-            else:
-                st_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
-                st_date = sans_opts[secilen_idx_sans]
+            st_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+            st_date = "Kayıt Bulunmuyor"
 
         sans_html = "".join([f"<div class='home-ball ball-blue'>{n}</div>" for n in st_nums]) if st_nums else "<span style='color:#94a3b8; font-size:13px; font-style:italic;'>Veri Bekleniyor...</span>"
-        splus_html = f"<div class='home-ball ball-red'>{st_plus}</div>" if st_plus and str(st_plus) != "-" else ""
+        splus_html = f"<div class='home-ball ball-red'>{st_plus}</div>" if st_plus and str(st_plus) not in ["-", "0", ""] else ""
         st.markdown(f"""<div style='background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #0ea5e9; margin-bottom: 10px;'><div style='display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px; margin-bottom: 12px;'><span style='font-size: 1rem; font-weight: 800; color: #0ea5e9;'>ŞANS TOPU</span>{st_status}</div><div style='text-align: center; color: #64748b; font-weight: 600; margin-bottom: 12px; font-size:13px;'>{st_date}</div><div style='display: flex; justify-content: center; align-items: center; gap: 3px; margin-bottom: 12px; flex-wrap: wrap;'>{sans_html} <span style='font-size: 18px; color: #cbd5e1; font-weight: 900; margin: 0 4px;'>+</span> {splus_html}</div></div>""", unsafe_allow_html=True)
         h_col1_s, h_col2_s = st.columns([1, 3])
         with h_col1_s:
@@ -868,34 +901,33 @@ if selected_game.upper() == "ANA SAYFA":
             if sans_opts.index(sel_s) != secilen_idx_sans: st.session_state.ana_sans_idx = sans_opts.index(sel_s); st.rerun()
         
         with st.expander("💰 Kazananlar ve İkramiye Tablosu"):
-            if secilen_idx_sans == 0 and mevcut_sans and mevcut_sans.get("buyuk_tutar"):
+            aktif_detay_sans = None
+            m_c_sans = re.search(r'(\d+)\.\s*Çekiliş', sans_opts[secilen_idx_sans])
+            hedef_c_no_sans = m_c_sans.group(1) if m_c_sans else None
+            
+            if hedef_c_no_sans and "sanstopu_history" in live_data and hedef_c_no_sans in live_data["sanstopu_history"]:
+                aktif_detay_sans = live_data["sanstopu_history"][hedef_c_no_sans]
+            elif secilen_idx_sans == 0:
+                aktif_detay_sans = mevcut_sans
+                
+            if aktif_detay_sans and aktif_detay_sans.get("bilen_5_1"):
                 st.markdown(f"""
                 <div style="background-color: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin-top: 5px;">
                     <table style="width:100%; text-align:left; border-collapse: collapse; font-size: 13px;">
                         <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
                             <th style="padding: 10px; color:#475569;">Bilen</th>
-                            <th style="padding: 10px; color:#475569;">Kazananlar & İkramiye Tutarı</th>
+                            <th style="padding: 10px; color:#475569;">Kazanan Kişi Sayısı</th>
+                            <th style="padding: 10px; color:#475569;">Kişi Başına Düşen İkramiye</th>
                         </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#ef4444;">5+1 Bilen</td>
-                            <td style="padding: 10px;"><b>{mevcut_sans.get('buyuk_kisi', '-')}</b> / <span style="color:#10b981; font-weight:bold;">{mevcut_sans.get('buyuk_tutar', '-')}</span></td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">5 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sans.get('bilen_5', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">4+1 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sans.get('bilen_4', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">4 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sans.get('bilen_3', '-')}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">3+1 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_sans.get('bilen_2', '-')}</td>
-                        </tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#ef4444;">5+1 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_5_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_5_1'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">5 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_5'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_5'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">4+1 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_4_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_4_1'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">4 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_4'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_4'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">3+1 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_3_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_3_1'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">3 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_3'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_3'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">2+1 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_2_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_2_1'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">1+1 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_1_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_1_1'))[1]}</td></tr>
+                        <tr><td style="padding:10px; font-weight:bold; color:#334155;">0+1 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_0_1'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_sans.get('bilen_0_1'))[1]}</td></tr>
                     </table>
                 </div>
                 """, unsafe_allow_html=True)
@@ -909,32 +941,40 @@ if selected_game.upper() == "ANA SAYFA":
         c_tar_on = mevcut_on.get("tarih", "")
         
         v_draws_on, msg_on = load_onnumara_ai_data()
-        archive_on = onnumara_archive
         
         on_opts_0 = f"🌐 {c_no_on}. Çekiliş (Güncel)" if c_no_on else "🌐 Güncel Ekran"
         on_opts = [on_opts_0]
         
-        api_farki_on = len(v_draws_on) - len(archive_on) if archive_on else len(v_draws_on)
+        c_no_int_on = int(c_no_on) if c_no_on and str(c_no_on).isdigit() else 0
+        archive_dict_on = {}
+        if onnumara_archive:
+            for arch in onnumara_archive:
+                m = re.search(r'(\d+)\.\s*Çekiliş', arch.get('display_name', ''))
+                if m: archive_dict_on[int(m.group(1))] = arch['display_name']
+                
         if v_draws_on:
             for i in range(1, len(v_draws_on)):
-                if archive_on and i > api_farki_on: on_opts.append(archive_on[i - api_farki_on - 1]['display_name'])
-                else: on_opts.append(f"🗄️ Son Eklenen Kayıt (Sondan {i}.)")
+                if c_no_int_on > 0:
+                    hedef = c_no_int_on - i
+                    on_opts.append(archive_dict_on.get(hedef, f"🗄️ {hedef}. Çekiliş"))
+                else:
+                    on_opts.append(f"🗄️ Arşiv (Sondan {i}.)")
 
         if "ana_on_idx" not in st.session_state: st.session_state.ana_on_idx = 0
         secilen_idx_on = st.session_state.ana_on_idx
         if secilen_idx_on >= len(on_opts): secilen_idx_on = 0
         
-        if not v_draws_on or len(v_draws_on) == 0:
-            on_nums, on_date = [], "Sistemde Kayıt Bulunmuyor"
-            on_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+        on_nums = mevcut_on.get("nums", v_draws_on[0] if v_draws_on else []) if secilen_idx_on == 0 else (v_draws_on[secilen_idx_on] if len(v_draws_on) > secilen_idx_on else [])
+
+        if secilen_idx_on == 0 and on_nums:
+            on_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
+            on_date = f"⏳ {c_no_on}. Çekiliş - {c_tar_on}" if (c_no_on and c_tar_on) else (f"⏳ {c_no_on}. Çekiliş" if c_no_on else "⏳ Sistemden En Güncel Kayıt")
+        elif on_nums:
+            on_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
+            on_date = on_opts[secilen_idx_on]
         else:
-            on_nums = v_draws_on[secilen_idx_on]
-            if secilen_idx_on == 0:
-                on_status = "<span style='color: #10b981; font-weight:800; background:#ecfdf5; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🟢 Aktif</span>"
-                on_date = f"⏳ {c_no_on}. Çekiliş - {c_tar_on}" if (c_no_on and c_tar_on) else (f"⏳ {c_no_on}. Çekiliş" if c_no_on else "⏳ Sistemden En Güncel Kayıt")
-            else:
-                on_status = "<span style='color: #64748b; font-weight:800; background:#f1f5f9; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🗄️ Arşiv</span>"
-                on_date = on_opts[secilen_idx_on]
+            on_status = "<span style='color: #dc2626; font-weight:800; background:#fef2f2; padding:3px 6px; border-radius:4px; font-size:0.75rem;'>🔴 Veri Yok</span>"
+            on_date = "Kayıt Bulunmuyor"
 
         if on_nums:
             onnumara_html_1 = "".join([f"<div class='home-onnumara-ball'>{n}</div>" for n in on_nums[:11]])
@@ -952,34 +992,30 @@ if selected_game.upper() == "ANA SAYFA":
             if on_opts.index(sel_on) != secilen_idx_on: st.session_state.ana_on_idx = on_opts.index(sel_on); st.rerun()
         
         with st.expander("💰 Kazananlar ve İkramiye Tablosu"):
-            if secilen_idx_on == 0 and mevcut_on and mevcut_on.get("buyuk_tutar"):
+            aktif_detay_on = None
+            m_c_on = re.search(r'(\d+)\.\s*Çekiliş', on_opts[secilen_idx_on])
+            hedef_c_no_on = m_c_on.group(1) if m_c_on else None
+            
+            if hedef_c_no_on and "onnumara_history" in live_data and hedef_c_no_on in live_data["onnumara_history"]:
+                aktif_detay_on = live_data["onnumara_history"][hedef_c_no_on]
+            elif secilen_idx_on == 0:
+                aktif_detay_on = mevcut_on
+                
+            if aktif_detay_on and aktif_detay_on.get("bilen_10"):
                 st.markdown(f"""
                 <div style="background-color: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin-top: 5px;">
                     <table style="width:100%; text-align:left; border-collapse: collapse; font-size: 13px;">
                         <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
                             <th style="padding: 10px; color:#475569;">Bilen</th>
-                            <th style="padding: 10px; color:#475569;">Kazananlar & İkramiye Tutarı</th>
+                            <th style="padding: 10px; color:#475569;">Kazanan Kişi Sayısı</th>
+                            <th style="padding: 10px; color:#475569;">Kişi Başına Düşen İkramiye</th>
                         </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#ef4444;">10 Bilen</td>
-                            <td style="padding: 10px;"><b>{mevcut_on.get('buyuk_kisi', '-')}</b> / <span style="color:#10b981; font-weight:bold;">{mevcut_on.get('buyuk_tutar', '-')}</span></td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">9 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_on.get('bilen_5', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">8 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_on.get('bilen_4', '-')}</td>
-                        </tr>
-                        <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">7 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_on.get('bilen_3', '-')}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; font-weight:bold; color:#334155;">6 Bilen / 0 Bilen</td>
-                            <td style="padding: 10px; color:#334155;">{mevcut_on.get('bilen_2', '-')}</td>
-                        </tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#ef4444;">10 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_10'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_10'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">9 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_9'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_9'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">8 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_8'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_8'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0; background:#f8fafc;"><td style="padding:10px; font-weight:bold; color:#334155;">7 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_7'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_7'))[1]}</td></tr>
+                        <tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding:10px; font-weight:bold; color:#334155;">6 Bilen</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_6'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_6'))[1]}</td></tr>
+                        <tr><td style="padding:10px; font-weight:bold; color:#334155;">Hiç Kazanamayan (0 Bilen)</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_0'))[0]}</td><td style="padding:10px;">{fmt(aktif_detay_on.get('bilen_0'))[1]}</td></tr>
                     </table>
                 </div>
                 """, unsafe_allow_html=True)
@@ -1001,11 +1037,7 @@ if selected_game.upper() == "ANA SAYFA":
     st.markdown("<br>", unsafe_allow_html=True)
     c3_man, c4_man = st.columns(2)
     with c3_man: st.markdown("""<div style='background-color: #f8fafc; border: 2px solid #cbd5e1; padding: 20px; border-radius: 12px; height: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'><h3 style='color: #047857; margin-top: 0; font-weight: 900;'>🛡️ K-Means Kümeleme (Klan Zırhı)</h3><p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>Sayılar sadece rakamlardan ibaret değildir; onların da bir karakteri, çıkma ivmesi (momentum) ve kapsama alanları vardır. Gözetimsiz bir Makine Öğrenmesi metodu olan K-Means algoritması, <b>tüm sayıları fiziksel özelliklerine göre 4 veya 5 farklı kampa (Klana) ayırır.</b></p><p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>Sistem, kolonlarınızı üretirken tüm topları aynı klandan seçmek yerine, her klandan en güçlü genleri alarak kuponunuza bir <span style='color: #0f172a; font-weight: 900;'>"Klan Zırhı"</span> giydirir. Dağılım ne kadar çeşitliyse, vurma ihtimali o kadar yükselir.</p></div>""", unsafe_allow_html=True)
-    with c4_man: st.markdown("""<div style='background-color: #f8fafc; border: 2px solid #cbd5e1; padding: 20px; border-radius: 12px; height: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'><h3 style='color: #d97706; margin-top: 0; font-weight: 900;'>📉 Çan Eğrisi (Normal Dağılım)</h3><p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>Dünyadaki her kaotik olayın bir merkezi, bir yerçekimi noktası vardır. Buna istatistikte <b>"Gauss Dağılımı"</b> veya Çan Eğrisi denir. </p><p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>Örneğin Çılgın Sayısal Loto'da çekilen 6 sayının toplamı <span style='color: #e61532; font-weight: 900;'>%80 ihtimalle 240 ile 310</span> arasında (Kalbi 273'tür) gerçekleşir. Sihirli Otopilot motorumuz, size kolon üretirken saniyeler içinde binlerce <b>Monte Carlo simülasyonu</b> yapar ve toplamı oyunun matematiksel kalbine (Çan eğrisinin tam ortasına) oturmayan HİÇBİR kolonu size göstermez.</p></div>""", unsafe_allow_html=True)
-        
-    st.markdown("<br><hr style='border: 2px dashed #cbd5e1; margin-bottom: 30px;'>", unsafe_allow_html=True)
-    st.markdown("""<div style='background-color: #0f172a; padding: 30px; border-radius: 12px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3);'><h2 style='color: #f8fafc; margin-top: 0; font-weight: 900; letter-spacing: 1px;'>🚀 ŞİMDİ SİHRİ BAŞLATIN</h2><p style='color: #cbd5e1; font-size: 1.15rem; margin-bottom: 25px;'>Matematiğin gücünü kendi gözlerinizle görmek için sol menüden oynamak istediğiniz oyunu seçin. İster kuralları kendiniz koyun, isterseniz tüm yetkiyi <b>Sihirli Yapay Zeka Otopilotuna</b> bırakın.</p><div style='display:inline-block; background-color:#10b981; color:white; font-weight:900; padding:12px 30px; border-radius:30px; font-size:1.1rem; border: 2px solid #059669;'>👈 SOL MENÜDEN BİR OYUN SEÇEREK ANALİZ MERKEZİNE GİRİŞ YAPIN</div></div>""", unsafe_allow_html=True)
-# ==========================================
+    with c4_man: st.markdown("""<div style='background-color: #f8fafc; border: 2px solid #cbd5e1; padding: 20px; border-radius: 12px; height: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'><h3 style='color: #d97706; margin-top: 0; font-weight: 900;'>📉 Çan Eğrisi (Normal Dağılım)</h3><p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>Dünyadaki her kaotik olayın bir merkezi, bir yerçekimi noktası vardır. Buna istatistikte <b>"Gauss Dağılımı"</b> veya Çan Eğrisi denir. </p><p style='color: #475569; font-size: 0.95rem; line-height: 1.6;'>Örneğin Çılgın Sayısal Loto'da çekilen 6 sayının toplamı <span style='color: #e61532; font-weight: 900;'>%80 ihtimalle 240 ile 310</span> arasında (Kalbi 273'tür) gerçekleşir. Sihirli Otopilot motorumuz, size kolon üretirken saniyeler içinde binlerce <b>Monte Carlo simülasyonu</b> yapar ve toplamı oyunun matematiksel kalbine (Çan eğrisinin tam ortasına) oturmayan HİÇBİR kolonu size göstermez.</p></div>""", unsafe_allow_html=True)# ==========================================
 # 👑 ADMİN KONTROL MERKEZİ (CANLI SONUÇ GİRİŞİ)
 # ==========================================
 elif selected_game == "ADMIN_PANEL":
@@ -1044,7 +1076,7 @@ elif selected_game == "ADMIN_PANEL":
 
             st.markdown("### 💰 İkramiye Detayları")
             
-            # --- 🔴 ÇILGIN SAYISAL LOTO DETAYLI KATEGORİLERİ ---
+            # --- 🔴 ÇILGIN SAYISAL LOTO DETAYLI KATEGORİLER ---
             if g_key == "sayisal":
                 st.markdown("<h5 style='color:#b91c1c;'>Ana Kategoriler</h5>", unsafe_allow_html=True)
                 c_ana1, c_ana2 = st.columns(2)
@@ -1070,7 +1102,7 @@ elif selected_game == "ADMIN_PANEL":
                     f_ss_2 = st.text_input("2+SüperStar", value=mevcut_veri.get("ss_2", ""), placeholder="Örn: 362 Kişi - 2.500 ₺")
                     f_ss_0 = st.text_input("0+SüperStar", value=mevcut_veri.get("ss_0", ""), placeholder="Örn: 4.813 Kişi - 125 ₺")
             
-            # --- 🔵 SÜPER LOTO DETAYLI KATEGORİLERİ ---
+            # --- 🔵 SÜPER LOTO DETAYLI KATEGORİLER ---
             elif g_key == "superloto":
                 c_sl1, c_sl2 = st.columns(2)
                 with c_sl1:
@@ -1081,7 +1113,7 @@ elif selected_game == "ADMIN_PANEL":
                     f_sl_5 = st.text_input("5 Bilen", value=mevcut_veri.get("bilen_5", ""), placeholder="Örn: 18 Kişi - 159.693 ₺")
                     f_sl_3 = st.text_input("3 Bilen", value=mevcut_veri.get("bilen_3", ""), placeholder="Örn: 20.354 Kişi - 266 ₺")
 
-            # --- 🟢 ŞANS TOPU DETAYLI KATEGORİLERİ ---
+            # --- 🟢 ŞANS TOPU DETAYLI KATEGORİLER ---
             elif g_key == "sanstopu":
                 c_st1, c_st2 = st.columns(2)
                 with c_st1:
@@ -1096,7 +1128,7 @@ elif selected_game == "ADMIN_PANEL":
                     f_st_3 = st.text_input("3 Bilen", value=mevcut_veri.get("bilen_3", ""), placeholder="Örn: 31.013 Kişi - 52 ₺")
                     f_st_1_1 = st.text_input("1+1 Bilen", value=mevcut_veri.get("bilen_1_1", ""), placeholder="Örn: 73.918 Kişi - 32 ₺")
 
-            # --- 🟡 ON NUMARA DETAYLI KATEGORİLERİ ---
+            # --- 🟡 ON NUMARA DETAYLI KATEGORİLER ---
             elif g_key == "onnumara":
                 c_on1, c_on2 = st.columns(2)
                 with c_on1:
@@ -1114,64 +1146,126 @@ elif selected_game == "ADMIN_PANEL":
                 try:
                     num_list = [int(x.strip()) for x in f_nums.split(",") if x.strip().isdigit()]
                     
-                    # Ana Çatı
-                    live_data[g_key] = {
+                    detay_verisi = {
                         "cekilis_no": f_cekilis_no,
                         "tarih": f_tarih,
                         "nums": num_list
                     }
                     
                     if g_key == "sayisal":
-                        live_data[g_key]["joker"] = int(f_joker) if f_joker.strip().isdigit() else 0
-                        live_data[g_key]["superstar"] = int(f_super) if f_super.strip().isdigit() else 0
-                        live_data[g_key]["bilen_6"] = f_6_bilen
-                        live_data[g_key]["bilen_5_1"] = f_5_1_bilen
-                        live_data[g_key]["bilen_5"] = f_5_bilen
-                        live_data[g_key]["bilen_4"] = f_4_bilen
-                        live_data[g_key]["bilen_3"] = f_3_bilen
-                        live_data[g_key]["bilen_2"] = f_2_bilen
-                        live_data[g_key]["ss_6"] = f_ss_6
-                        live_data[g_key]["ss_5_1"] = f_ss_5_1
-                        live_data[g_key]["ss_5"] = f_ss_5
-                        live_data[g_key]["ss_4"] = f_ss_4
-                        live_data[g_key]["ss_3"] = f_ss_3
-                        live_data[g_key]["ss_2"] = f_ss_2
-                        live_data[g_key]["ss_1"] = f_ss_1
-                        live_data[g_key]["ss_0"] = f_ss_0
+                        detay_verisi["joker"] = int(f_joker) if f_joker.strip().isdigit() else 0
+                        detay_verisi["superstar"] = int(f_super) if f_super.strip().isdigit() else 0
+                        detay_verisi["bilen_6"] = f_6_bilen; detay_verisi["bilen_5_1"] = f_5_1_bilen
+                        detay_verisi["bilen_5"] = f_5_bilen; detay_verisi["bilen_4"] = f_4_bilen
+                        detay_verisi["bilen_3"] = f_3_bilen; detay_verisi["bilen_2"] = f_2_bilen
+                        detay_verisi["ss_6"] = f_ss_6; detay_verisi["ss_5_1"] = f_ss_5_1
+                        detay_verisi["ss_5"] = f_ss_5; detay_verisi["ss_4"] = f_ss_4
+                        detay_verisi["ss_3"] = f_ss_3; detay_verisi["ss_2"] = f_ss_2
+                        detay_verisi["ss_1"] = f_ss_1; detay_verisi["ss_0"] = f_ss_0
 
                     elif g_key == "superloto":
-                        live_data[g_key]["bilen_6"] = f_sl_6
-                        live_data[g_key]["bilen_5"] = f_sl_5
-                        live_data[g_key]["bilen_4"] = f_sl_4
-                        live_data[g_key]["bilen_3"] = f_sl_3
-                        live_data[g_key]["bilen_2"] = f_sl_2
+                        detay_verisi["bilen_6"] = f_sl_6; detay_verisi["bilen_5"] = f_sl_5
+                        detay_verisi["bilen_4"] = f_sl_4; detay_verisi["bilen_3"] = f_sl_3
+                        detay_verisi["bilen_2"] = f_sl_2
 
                     elif g_key == "sanstopu":
-                        live_data[g_key]["plus"] = int(f_plus) if f_plus.strip().isdigit() else 0
-                        live_data[g_key]["bilen_5_1"] = f_st_5_1
-                        live_data[g_key]["bilen_5"] = f_st_5
-                        live_data[g_key]["bilen_4_1"] = f_st_4_1
-                        live_data[g_key]["bilen_4"] = f_st_4
-                        live_data[g_key]["bilen_3_1"] = f_st_3_1
-                        live_data[g_key]["bilen_3"] = f_st_3
-                        live_data[g_key]["bilen_2_1"] = f_st_2_1
-                        live_data[g_key]["bilen_1_1"] = f_st_1_1
-                        live_data[g_key]["bilen_0_1"] = f_st_0_1
+                        detay_verisi["plus"] = int(f_plus) if f_plus.strip().isdigit() else 0
+                        detay_verisi["bilen_5_1"] = f_st_5_1; detay_verisi["bilen_5"] = f_st_5
+                        detay_verisi["bilen_4_1"] = f_st_4_1; detay_verisi["bilen_4"] = f_st_4
+                        detay_verisi["bilen_3_1"] = f_st_3_1; detay_verisi["bilen_3"] = f_st_3
+                        detay_verisi["bilen_2_1"] = f_st_2_1; detay_verisi["bilen_1_1"] = f_st_1_1
+                        detay_verisi["bilen_0_1"] = f_st_0_1
 
                     elif g_key == "onnumara":
-                        live_data[g_key]["bilen_10"] = f_on_10
-                        live_data[g_key]["bilen_9"] = f_on_9
-                        live_data[g_key]["bilen_8"] = f_on_8
-                        live_data[g_key]["bilen_7"] = f_on_7
-                        live_data[g_key]["bilen_6"] = f_on_6
-                        live_data[g_key]["bilen_0"] = f_on_0
+                        detay_verisi["bilen_10"] = f_on_10; detay_verisi["bilen_9"] = f_on_9
+                        detay_verisi["bilen_8"] = f_on_8; detay_verisi["bilen_7"] = f_on_7
+                        detay_verisi["bilen_6"] = f_on_6; detay_verisi["bilen_0"] = f_on_0
 
+                    live_data[g_key] = detay_verisi
+                    hist_key = f"{g_key}_history"
+                    if hist_key not in live_data: live_data[hist_key] = {}
+                    live_data[hist_key][str(f_cekilis_no)] = detay_verisi
                     save_live_data(live_data)
-                    st.success(f"✅ {oyun_secim} sonuçları başarıyla sisteme kazındı! Kuponlar anında güncelleniyor...")
+
+                    try:
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                    except:
+                        pass
+
+                    # 🚀 SQL KALESİNE ANINDA YAZ (YAPAY ZEKAYI EĞİT)
+                    import sqlite3
+                    try:
+                        conn = sqlite3.connect('loto.db')
+                        cursor = conn.cursor()
+                        if g_key == "sayisal":
+                            cursor.execute("INSERT INTO sayisal_loto (t1, t2, t3, t4, t5, t6, joker, superstar) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (*num_list[:6], detay_verisi["joker"], detay_verisi["superstar"]))
+                        elif g_key == "superloto":
+                            cursor.execute("INSERT INTO super_loto (t1, t2, t3, t4, t5, t6) VALUES (?, ?, ?, ?, ?, ?)", tuple(num_list[:6]))
+                        elif g_key == "sanstopu":
+                            cursor.execute("INSERT INTO sans_topu (t1, t2, t3, t4, t5, arti) VALUES (?, ?, ?, ?, ?, ?)", (*num_list[:5], detay_verisi["plus"]))
+                        elif g_key == "onnumara":
+                            q_marks = ', '.join(['?']*22)
+                            cursor.execute(f"INSERT INTO on_numara ({', '.join([f't{i}' for i in range(1,23)])}) VALUES ({q_marks})", tuple(num_list[:22]))
+                        conn.commit()
+                        conn.close()
+                    except Exception as e:
+                        st.error(f"SQL Güncelleme Hatası: {e}")
+
+                    # 🎯 EXCEL ARŞİVİNE YAZMA VE TARİH FORMATI KORUMASI
+                    import pandas as pd
+                    import os
+                    try:
+                        dosya_adlari = {
+                            "sayisal": "çlgn_sysl.xlsx",
+                            "superloto": "süper.xlsx",
+                            "sanstopu": "şns_topu.xlsx",
+                            "onnumara": "onnumara.xlsx"
+                        }
+                        dosya_adi = dosya_adlari.get(g_key)
+                        
+                        if os.path.exists(dosya_adi):
+                            df_eski = pd.read_excel(dosya_adi)
+                            orijinal_sutunlar = df_eski.columns.tolist()
+                            
+                            yeni_degerler = []
+                            if len(orijinal_sutunlar) > 0: yeni_degerler.append(f_cekilis_no)
+                            if len(orijinal_sutunlar) > 1: yeni_degerler.append(f_tarih)
+                            for num in num_list: yeni_degerler.append(num)
+                            if g_key == "sayisal": yeni_degerler.extend([detay_verisi.get("joker", 0), detay_verisi.get("superstar", 0)])
+                            if g_key == "sanstopu": yeni_degerler.append(detay_verisi.get("plus", 0))
+                                
+                            while len(yeni_degerler) < len(orijinal_sutunlar): yeni_degerler.append("")
+                            yeni_degerler = yeni_degerler[:len(orijinal_sutunlar)]
+                            
+                            df_yeni = pd.DataFrame([yeni_degerler], columns=orijinal_sutunlar)
+                            df_son = pd.concat([df_yeni, df_eski], ignore_index=True)
+                            
+                            # 🛡️ PANDAS TARİH KORUMASI: Tüm tarihleri metin (GG.AA.YYYY) olarak zorla
+                            if len(orijinal_sutunlar) > 1:
+                                tarih_sut = orijinal_sutunlar[1]
+                                yeni_tarihler = []
+                                for val in df_son[tarih_sut]:
+                                    val_str = str(val).split(" ")[0].strip() # Saati atar
+                                    if "-" in val_str:
+                                        parts = val_str.split("-")
+                                        if len(parts) == 3 and len(parts[0]) == 4: # YYYY-MM-DD formatını çevirir
+                                            val_str = f"{parts[2]}.{parts[1]}.{parts[0]}"
+                                    yeni_tarihler.append(val_str)
+                                df_son[tarih_sut] = yeni_tarihler
+                            
+                            df_son.to_excel(dosya_adi, index=False)
+                            st.success(f"✅ Sonuçlar başarıyla sisteme, SQL'e VE '{dosya_adi}' dosyasına kazındı!")
+                        else:
+                            st.warning(f"⚠️ '{dosya_adi}' bulunamadı!")
+
+                    except Exception as e:
+                        st.error(f"Excel'e yazarken bir sorun oluştu: {e}")
+
                     time.sleep(1.5)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"🚨 Format Hatası: Lütfen numaraları arasına sadece virgül koyarak yazın! (Örn: 1, 23, 45, 56)") 
+                    st.error(f"🚨 Format Hatası: Lütfen numaraları arasına sadece virgül koyarak yazın! Hata: {e}")
 # ==========================================
 # 🎫 KUPONLARIM & KAZANÇ MERKEZİ
 # ==========================================
@@ -1183,13 +1277,11 @@ elif selected_game == "KUPONLARIM":
     <div style='background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 25px; border-radius: 12px; border-left: 5px solid #d97706; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); margin-bottom: 25px;'>
         <h3 style='color: #fbbf24; margin-top: 0; font-weight: 900; letter-spacing: 0.5px;'>🔮 KİŞİSEL KUANTUM KASANIZA HOŞ GELDİNİZ!</h3>
         <p style='color: #e2e8f0; font-size: 15px; line-height: 1.6; margin-bottom: 15px;'>
-            Burası kuponlarınızı sakladığınız sıradan bir arşiv değil; <b>Yapay Zeka destekli Otomatik İkramiye Avcınızdır!</b> Siz sadece makinenin ürettiği kusursuz kolonları onaylayın, gerisini Kaptan'ın zekasına bırakın.
-        </p>
         <div style='background-color: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px dashed rgba(255,255,255,0.2);'>
             <ul style='color: #cbd5e1; font-size: 14px; line-height: 1.7; margin-bottom: 0; padding-left: 20px;'>
                 <li><strong style='color:#38bdf8;'>Stratejinizi Mühürleyin:</strong> Oyun sayfalarından ürettiğiniz en iddialı kolonları <b>"Kasaya Kaydet"</b> diyerek bu güvenli kasaya kilitleyin.</li>
                 <li><strong style='color:#a78bfa;'>Canlı Tarama Beklentisi:</strong> Çekiliş sonuçları sistemimize düştüğü saniye, bu sayfa otomatik olarak canlanır. Sizin hiçbir şeye dokunmanıza gerek kalmaz.</li>
-                <li><strong style='color:#34d399;'>İkramiye Bildirimi:</strong> Kuantum motoru, kasadaki tüm kuponlarınızı saliseler içinde tarar, tutturduğunuz numaraları <b>yeşile boyar</b> ve kazandığınız ikramiye durumunu anında karşınıza çıkarır!</li>
+                <li><strong style='color:#34d399;'>İkramiye Bildirimi:</strong> Kuantum motoru, kasadaki tüm kuponlarınızı saliseler içinde tarar, tutturduğunuz numaraları ve kazandığınız ikramiye durumunu anında karşınıza çıkarır!</li>
             </ul>
         </div>
     </div>
@@ -1305,7 +1397,7 @@ elif selected_game == "KUPONLARIM":
                             st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
                             if st.button("🗑️ Sil", key=f"del_{g_id}_{ts}_{idx}", use_container_width=True):
                                 try:
-                                    delete_coupon_from_db(st.session_state.user_email, g_id, ts)
+                                    delete_coupon_from_db(c['id'])
                                     st.success("Silindi!")
                                     time.sleep(0.5)
                                     st.rerun()
@@ -5102,14 +5194,6 @@ oyun_adlari = {
     "ON NUMARA AI": "On Numara"
 }
 gosterilen_oyun = oyun_adlari.get(selected_game, "Sistem")
-
-st.markdown(f"""
-<div style='text-align: center; margin-bottom: 12px;'>
-    <span style='color: #64748b; font-size: 12px; font-style: italic; background-color: #f8fafc; padding: 6px 16px; border-radius: 20px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.02);'>
-        🕰️ <b>Analiz Kapsamı:</b> {gosterilen_oyun} motoru, <b>2025 yılı başı itibarıyla</b> gerçekleşen güncel resmi çekiliş verilerini baz alarak optimize edilmiştir.
-    </span>
-</div>
-""", unsafe_allow_html=True)
 
 # Buranın hemen altında senin o "YASAL BİLGİLENDİRME (MEVZUAT)" st.markdown kodun yer alacak...
 st.markdown("---")
